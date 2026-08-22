@@ -1,0 +1,40 @@
+{
+  "name": "ai-chat-lock",
+  "displayName": "AI Chat Lock",
+  "version": "0.1.0",
+  "description": "Password-lock individual AI chat conversations across ChatGPT, Claude, Gemini, DeepSeek, Qwen, and Kimi",
+  "author": "Sushank",
+  "scripts": {
+    "dev": "plasmo dev",
+    "build": "plasmo build",
+    "package": "plasmo package"
+  },
+  "dependencies": {
+    "plasmo": "^0.89.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "typescript": "^5.7.2"
+  },
+  "manifest": {
+    "permissions": [
+      "storage",
+      "idle",
+      "activeTab"
+    ],
+    "host_permissions": [
+      "https://chatgpt.com/*",
+      "https://chat.openai.com/*",
+      "https://claude.ai/*",
+      "https://gemini.google.com/*",
+      "https://chat.deepseek.com/*",
+      "https://chat.qwen.ai/*",
+      "https://kimi.com/*",
+      "https://kimi.moonshot.cn/*"
+    ]
+  }
+}
