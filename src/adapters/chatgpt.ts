@@ -14,10 +14,8 @@
 
 import type { SiteAdapter } from '~/core/types'
 
-/** Data attribute we use to mark rows we've processed */
-const PROCESSED_ATTR = 'data-acl-processed'
-const ORIGINAL_TITLE_ATTR = 'data-acl-original-title'
 const LOCKED_ATTR = 'data-acl-locked'
+const originalTitles = new WeakMap<Element, string>()
 
 export const chatgptAdapter: SiteAdapter = {
   siteId: 'chatgpt',
@@ -31,7 +29,6 @@ export const chatgptAdapter: SiteAdapter = {
   },
 
   getSidebarRoot(): Element | null {
-    // Try stable selectors first, then fall back
     return (
       document.querySelector('nav[aria-label="Chat history"]') ??
       document.querySelector('nav') ??
@@ -43,7 +40,6 @@ export const chatgptAdapter: SiteAdapter = {
     const root = this.getSidebarRoot()
     if (!root) return []
 
-    // ChatGPT chat links follow the pattern /c/<uuid>
     const links = root.querySelectorAll('a[href*="/c/"]')
     return Array.from(links)
   },
@@ -52,18 +48,14 @@ export const chatgptAdapter: SiteAdapter = {
     const href = row.getAttribute('href')
     if (!href) return null
 
-    // Extract UUID from /c/<uuid>
     const match = href.match(/\/c\/([a-f0-9-]+)/i)
     return match?.[1] ?? null
   },
 
   getChatTitle(row: Element): string {
-    // The title is typically inside a nested div or span
-    // Save it before hiding
-    const saved = row.getAttribute(ORIGINAL_TITLE_ATTR)
+    const saved = originalTitles.get(row)
     if (saved) return saved
 
-    // Find the deepest text-containing element
     const titleEl = findTitleElement(row)
     return titleEl?.textContent?.trim() ?? 'Untitled chat'
   },
@@ -71,20 +63,16 @@ export const chatgptAdapter: SiteAdapter = {
   hideChatTitle(row: Element, lockedLabel: string): void {
     if (row.getAttribute(LOCKED_ATTR) === 'true') return
 
-    // Save original title before replacing
     const titleEl = findTitleElement(row)
     if (titleEl) {
       const originalTitle = titleEl.textContent?.trim() ?? ''
       if (originalTitle && originalTitle !== lockedLabel) {
-        row.setAttribute(ORIGINAL_TITLE_ATTR, originalTitle)
+        originalTitles.set(row, originalTitle)
       }
-      // Replace with locked label — removes real title from DOM entirely
       titleEl.textContent = lockedLabel
     }
 
     row.setAttribute(LOCKED_ATTR, 'true')
-
-    // Dim the row visually
     ;(row as HTMLElement).style.opacity = '0.6'
   },
 
@@ -95,7 +83,7 @@ export const chatgptAdapter: SiteAdapter = {
     }
 
     row.removeAttribute(LOCKED_ATTR)
-    row.removeAttribute(ORIGINAL_TITLE_ATTR)
+    originalTitles.delete(row)
     ;(row as HTMLElement).style.opacity = ''
   },
 
@@ -105,7 +93,6 @@ export const chatgptAdapter: SiteAdapter = {
     isLocked: boolean,
     onToggle: () => void
   ): void {
-    // Remove existing button if any
     const existing = row.querySelector('[data-acl-btn]')
     if (existing) existing.remove()
 
@@ -124,7 +111,7 @@ export const chatgptAdapter: SiteAdapter = {
       font-size: 14px;
       padding: 4px 6px;
       border-radius: 6px;
-      opacity: 0;
+      opacity: ${isLocked ? '0.6' : '0'};
       transition: opacity 0.15s, background 0.15s;
       z-index: 10;
       line-height: 1;
@@ -136,24 +123,24 @@ export const chatgptAdapter: SiteAdapter = {
       onToggle()
     })
 
-    // Ensure the row is relatively positioned for absolute button
     const rowEl = row as HTMLElement
-    const currentPosition = getComputedStyle(rowEl).position
-    if (currentPosition === 'static') {
+    if (getComputedStyle(rowEl).position === 'static') {
       rowEl.style.position = 'relative'
     }
 
-    // Show button on hover
-    rowEl.addEventListener('mouseenter', () => {
-      btn.style.opacity = '1'
-    })
-    rowEl.addEventListener('mouseleave', () => {
-      btn.style.opacity = isLocked ? '0.6' : '0'
-    })
-
-    // Keep locked icon slightly visible
-    if (isLocked) {
-      btn.style.opacity = '0.6'
+    if (!rowEl.hasAttribute('data-acl-hover-bound')) {
+      rowEl.setAttribute('data-acl-hover-bound', 'true')
+      rowEl.addEventListener('mouseenter', () => {
+        const b = rowEl.querySelector('[data-acl-btn]') as HTMLElement | null
+        if (b) b.style.opacity = '1'
+      })
+      rowEl.addEventListener('mouseleave', () => {
+        const b = rowEl.querySelector('[data-acl-btn]') as HTMLElement | null
+        if (b) {
+          const isL = rowEl.getAttribute(LOCKED_ATTR) === 'true'
+          b.style.opacity = isL ? '0.6' : '0'
+        }
+      })
     }
 
     rowEl.appendChild(btn)
@@ -179,30 +166,21 @@ export const chatgptAdapter: SiteAdapter = {
   }
 }
 
-/**
- * Find the element that contains the chat title text within a row.
- * ChatGPT typically nests the title in a div inside the <a> link.
- */
 function findTitleElement(row: Element): Element | null {
-  // Look for the first text-containing element that isn't a button or icon
-  // ChatGPT uses <div class="...">Title text</div> inside the <a>
   const candidates = row.querySelectorAll('div, span, p')
 
   for (const el of candidates) {
-    // Skip if it's a button container, icon, or our injected button
     if (el.querySelector('button') || el.querySelector('svg')) continue
     if (el.getAttribute('data-acl-btn') !== null) continue
     if (el.children.length > 2) continue
 
     const text = el.textContent?.trim()
     if (text && text.length > 0 && text.length < 200) {
-      // Prefer elements that are direct text containers (no deeply nested children)
       if (el.childElementCount === 0 || el.children.length <= 1) {
         return el
       }
     }
   }
 
-  // Fallback — return the row itself
   return row
 }
