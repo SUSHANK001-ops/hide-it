@@ -28,6 +28,7 @@ export function createSidebarObserver(
   onMutation: () => void
 ): ObserverHandle {
   let observer: MutationObserver | null = null
+  let bodyObserver: MutationObserver | null = null
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   let currentRoot: Element | null = null
@@ -56,8 +57,9 @@ export function createSidebarObserver(
     // If we're already observing this exact element, skip
     if (root === currentRoot && observer) return
 
-    // Disconnect previous observer
+    // Disconnect previous observers
     observer?.disconnect()
+    bodyObserver?.disconnect()
     currentRoot = root
 
     observer = new MutationObserver((_mutations) => {
@@ -80,9 +82,10 @@ export function createSidebarObserver(
     })
 
     // Also observe the body for complete sidebar replacements
-    const bodyObserver = new MutationObserver(() => {
+    bodyObserver = new MutationObserver(() => {
       if (currentRoot && !document.contains(currentRoot)) {
         observer?.disconnect()
+        bodyObserver?.disconnect()
         currentRoot = null
         attach()
       }
@@ -104,6 +107,7 @@ export function createSidebarObserver(
     disconnect() {
       destroyed = true
       observer?.disconnect()
+      bodyObserver?.disconnect()
       if (debounceTimer) clearTimeout(debounceTimer)
       if (retryTimer) clearTimeout(retryTimer)
     },

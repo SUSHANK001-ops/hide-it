@@ -1,7 +1,7 @@
 import type { PlasmoCSConfig } from 'plasmo'
-import { getAdapterForHost } from '~src/adapters'
-import { applyLocks } from '~src/core/lock-engine'
-import { createSidebarObserver } from '~src/core/observer'
+import { getAdapterForHost } from '~/adapters'
+import { applyLocks } from '~/core/lock-engine'
+import { createSidebarObserver } from '~/core/observer'
 
 export const config: PlasmoCSConfig = {
   matches: [

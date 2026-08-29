@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { ExtensionSettings, LockedChatEntry } from '~src/core/types'
+import type { ExtensionSettings, LockedChatEntry } from '~/core/types'
 import {
   getLockedChats,
   unlockChat,
@@ -8,8 +8,8 @@ import {
   getPasswordHash,
   getSettings,
   updateSettings
-} from '~src/core/storage'
-import { hashPassword, verifyPassword } from '~src/core/crypto'
+} from '~/core/storage'
+import { hashPassword, verifyPassword } from '~/core/crypto'
 import './popup.css'
 
 export default function Popup() {

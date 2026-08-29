@@ -7,7 +7,7 @@
  *  3. Relay messages between popup and content scripts
  */
 
-import { getSettings, getLockedChats } from '~src/core/storage'
+import { getSettings, getLockedChats } from '~/core/storage'
 
 // State tracking for current tab sessions
 let activeTabUnlocked = false
