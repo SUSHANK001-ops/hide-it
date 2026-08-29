@@ -12,7 +12,7 @@
  * If Gemini changes its UI, ONLY this file needs updating.
  */
 
-import type { SiteAdapter } from '~src/core/types'
+import type { SiteAdapter } from '~/core/types'
 
 const ORIGINAL_TITLE_ATTR = 'data-acl-original-title'
 const LOCKED_ATTR = 'data-acl-locked'

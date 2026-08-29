@@ -2,7 +2,7 @@
  * Adapter Registry — combined exports of all 6 site adapters.
  */
 
-import type { SiteAdapter } from '~src/core/types'
+import type { SiteAdapter } from '~/core/types'
 import { chatgptAdapter } from './chatgpt'
 import { claudeAdapter } from './claude'
 import { geminiAdapter } from './gemini'

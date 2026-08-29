@@ -12,7 +12,7 @@
  * If ChatGPT changes its UI, ONLY this file needs updating.
  */
 
-import type { SiteAdapter } from '~src/core/types'
+import type { SiteAdapter } from '~/core/types'
 
 /** Data attribute we use to mark rows we've processed */
 const PROCESSED_ATTR = 'data-acl-processed'

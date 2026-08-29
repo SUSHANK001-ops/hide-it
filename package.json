@@ -5,9 +5,9 @@
   "description": "Password-lock individual AI chat conversations across ChatGPT, Claude, Gemini, DeepSeek, Qwen, and Kimi",
   "author": "Sushank",
   "scripts": {
-    "dev": "plasmo dev",
-    "build": "plasmo build",
-    "package": "plasmo package"
+    "dev": "npx plasmo dev",
+    "build": "npx plasmo build",
+    "package": "npx plasmo package"
   },
   "dependencies": {
     "plasmo": "^0.89.2",
