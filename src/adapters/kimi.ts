@@ -13,8 +13,8 @@
 
 import type { SiteAdapter } from '~/core/types'
 
-const ORIGINAL_TITLE_ATTR = 'data-acl-original-title'
 const LOCKED_ATTR = 'data-acl-locked'
+const originalTitles = new WeakMap<Element, string>()
 
 export const kimiAdapter: SiteAdapter = {
   siteId: 'kimi',
@@ -42,15 +42,12 @@ export const kimiAdapter: SiteAdapter = {
     const root = this.getSidebarRoot()
     if (!root) return []
 
-    // Kimi may use /chat/<id> or similar URL patterns
     const links = root.querySelectorAll('a[href*="/chat/"], a[href*="/c/"]')
     if (links.length > 0) return Array.from(links)
 
-    // Look for conversation items with data attributes
     const items = root.querySelectorAll('[data-chat-id], [data-conversation-id], [class*="chat-item"]')
     if (items.length > 0) return Array.from(items)
 
-    // Fallback: any links within the sidebar
     return Array.from(root.querySelectorAll('a[href]')).filter((a) => {
       const href = a.getAttribute('href') ?? ''
       return href.includes('/chat') || href.includes('/c/')
@@ -71,7 +68,7 @@ export const kimiAdapter: SiteAdapter = {
   },
 
   getChatTitle(row: Element): string {
-    const saved = row.getAttribute(ORIGINAL_TITLE_ATTR)
+    const saved = originalTitles.get(row)
     if (saved) return saved
     const titleEl = findTitleElement(row)
     return titleEl?.textContent?.trim() ?? 'Untitled chat'
@@ -83,7 +80,7 @@ export const kimiAdapter: SiteAdapter = {
     if (titleEl) {
       const originalTitle = titleEl.textContent?.trim() ?? ''
       if (originalTitle && originalTitle !== lockedLabel) {
-        row.setAttribute(ORIGINAL_TITLE_ATTR, originalTitle)
+        originalTitles.set(row, originalTitle)
       }
       titleEl.textContent = lockedLabel
     }
@@ -95,7 +92,7 @@ export const kimiAdapter: SiteAdapter = {
     const titleEl = findTitleElement(row)
     if (titleEl) titleEl.textContent = originalTitle
     row.removeAttribute(LOCKED_ATTR)
-    row.removeAttribute(ORIGINAL_TITLE_ATTR)
+    originalTitles.delete(row)
     ;(row as HTMLElement).style.opacity = ''
   },
 
@@ -123,7 +120,7 @@ export const kimiAdapter: SiteAdapter = {
       font-size: 14px;
       padding: 4px 6px;
       border-radius: 6px;
-      opacity: 0;
+      opacity: ${isLocked ? '0.6' : '0'};
       transition: opacity 0.15s, background 0.15s;
       z-index: 10;
       line-height: 1;
@@ -138,9 +135,20 @@ export const kimiAdapter: SiteAdapter = {
     const rowEl = row as HTMLElement
     if (getComputedStyle(rowEl).position === 'static') rowEl.style.position = 'relative'
 
-    rowEl.addEventListener('mouseenter', () => { btn.style.opacity = '1' })
-    rowEl.addEventListener('mouseleave', () => { btn.style.opacity = isLocked ? '0.6' : '0' })
-    if (isLocked) btn.style.opacity = '0.6'
+    if (!rowEl.hasAttribute('data-acl-hover-bound')) {
+      rowEl.setAttribute('data-acl-hover-bound', 'true')
+      rowEl.addEventListener('mouseenter', () => {
+        const b = rowEl.querySelector('[data-acl-btn]') as HTMLElement | null
+        if (b) b.style.opacity = '1'
+      })
+      rowEl.addEventListener('mouseleave', () => {
+        const b = rowEl.querySelector('[data-acl-btn]') as HTMLElement | null
+        if (b) {
+          const isL = rowEl.getAttribute(LOCKED_ATTR) === 'true'
+          b.style.opacity = isL ? '0.6' : '0'
+        }
+      })
+    }
 
     rowEl.appendChild(btn)
   },
