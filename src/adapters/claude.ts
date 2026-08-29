@@ -2,19 +2,17 @@
  * Claude Adapter
  *
  * Targets: claude.ai
- *
- * DOM Selectors (as of Aug 2026 — likely to change):
- *   Sidebar root: Navigation panel with conversation list
- *   Chat rows:    <a> elements with href matching /chat/<uuid>
- *   Chat ID:      UUID extracted from href /chat/<uuid>
- *   Title:        Text content within the link
- *
- * If Claude changes its UI, ONLY this file needs updating.
  */
 
 import type { SiteAdapter } from '~/core/types'
+import {
+  findBestTitleElement,
+  maskChatTitle,
+  unmaskChatTitle,
+  interceptRowEvents,
+  injectStandardLockButton
+} from '~/core/dom-utils'
 
-const LOCKED_ATTR = 'data-acl-locked'
 const originalTitles = new WeakMap<Element, string>()
 
 export const claudeAdapter: SiteAdapter = {
@@ -31,53 +29,49 @@ export const claudeAdapter: SiteAdapter = {
       document.querySelector('nav[aria-label*="conversation"]') ??
       document.querySelector('nav[aria-label*="chat"]') ??
       document.querySelector('aside nav') ??
+      document.querySelector('aside') ??
       document.querySelector('nav') ??
-      null
+      document.querySelector('[class*="sidebar"]') ??
+      document.body
     )
   },
 
   getChatRows(): Element[] {
-    const root = this.getSidebarRoot()
-    if (!root) return []
-
-    const links = root.querySelectorAll('a[href*="/chat/"]')
-    return Array.from(links)
+    const root = this.getSidebarRoot() ?? document
+    // Find all links referencing a chat session
+    const links = Array.from(root.querySelectorAll<HTMLAnchorElement>('a[href*="/chat/"], a[href^="/chat/"]'))
+    
+    // Filter out "/chat/new" or other action buttons
+    return links.filter((a) => {
+      const href = a.getAttribute('href') ?? ''
+      const match = href.match(/\/chat\/([a-zA-Z0-9_-]+)/i)
+      return match && match[1] !== 'new'
+    })
   },
 
   getChatId(row: Element): string | null {
-    const href = row.getAttribute('href')
+    const href = row.getAttribute('href') ?? row.closest('a')?.getAttribute('href')
     if (!href) return null
-    const match = href.match(/\/chat\/([a-f0-9-]+)/i)
-    return match?.[1] ?? null
+    const match = href.match(/\/chat\/([a-zA-Z0-9_-]+)/i)
+    if (match && match[1] !== 'new') {
+      return match[1]
+    }
+    return null
   },
 
   getChatTitle(row: Element): string {
     const saved = originalTitles.get(row)
     if (saved) return saved
-    const titleEl = findTitleElement(row)
+    const titleEl = findBestTitleElement(row)
     return titleEl?.textContent?.trim() ?? 'Untitled chat'
   },
 
   hideChatTitle(row: Element, lockedLabel: string): void {
-    if (row.getAttribute(LOCKED_ATTR) === 'true') return
-    const titleEl = findTitleElement(row)
-    if (titleEl) {
-      const originalTitle = titleEl.textContent?.trim() ?? ''
-      if (originalTitle && originalTitle !== lockedLabel) {
-        originalTitles.set(row, originalTitle)
-      }
-      titleEl.textContent = lockedLabel
-    }
-    row.setAttribute(LOCKED_ATTR, 'true')
-    ;(row as HTMLElement).style.opacity = '0.6'
+    maskChatTitle(row, lockedLabel, originalTitles)
   },
 
   restoreChatTitle(row: Element, originalTitle: string): void {
-    const titleEl = findTitleElement(row)
-    if (titleEl) titleEl.textContent = originalTitle
-    row.removeAttribute(LOCKED_ATTR)
-    originalTitles.delete(row)
-    ;(row as HTMLElement).style.opacity = ''
+    unmaskChatTitle(row, originalTitle, originalTitles)
   },
 
   injectLockButton(
@@ -86,57 +80,8 @@ export const claudeAdapter: SiteAdapter = {
     isLocked: boolean,
     onToggle: () => void
   ): void {
-    const existing = row.querySelector('[data-acl-btn]')
-    if (existing) existing.remove()
-
-    const btn = document.createElement('button')
-    btn.setAttribute('data-acl-btn', chatId)
-    btn.title = isLocked ? 'Unlock chat' : 'Lock chat'
-    btn.textContent = isLocked ? '🔓' : '🔒'
-    btn.setAttribute('style', `
-      position: absolute;
-      right: 8px;
-      top: 50%;
-      transform: translateY(-50%);
-      background: none;
-      border: none;
-      cursor: pointer;
-      font-size: 14px;
-      padding: 4px 6px;
-      border-radius: 6px;
-      opacity: ${isLocked ? '0.6' : '0'};
-      transition: opacity 0.15s, background 0.15s;
-      z-index: 10;
-      line-height: 1;
-    `)
-
-    btn.addEventListener('click', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      onToggle()
-    })
-
-    const rowEl = row as HTMLElement
-    if (getComputedStyle(rowEl).position === 'static') {
-      rowEl.style.position = 'relative'
-    }
-
-    if (!rowEl.hasAttribute('data-acl-hover-bound')) {
-      rowEl.setAttribute('data-acl-hover-bound', 'true')
-      rowEl.addEventListener('mouseenter', () => {
-        const b = rowEl.querySelector('[data-acl-btn]') as HTMLElement | null
-        if (b) b.style.opacity = '1'
-      })
-      rowEl.addEventListener('mouseleave', () => {
-        const b = rowEl.querySelector('[data-acl-btn]') as HTMLElement | null
-        if (b) {
-          const isL = rowEl.getAttribute(LOCKED_ATTR) === 'true'
-          b.style.opacity = isL ? '0.6' : '0'
-        }
-      })
-    }
-
-    rowEl.appendChild(btn)
+    // Claude has a 3-dots menu button on the far right (~8px), so position lock button at 36px
+    injectStandardLockButton(row, chatId, isLocked, onToggle, '34px')
   },
 
   interceptNavigation(
@@ -144,26 +89,6 @@ export const claudeAdapter: SiteAdapter = {
     _chatId: string,
     onAttempt: () => void
   ): (() => void) | null {
-    const handler = (e: Event) => {
-      e.preventDefault()
-      e.stopPropagation()
-      e.stopImmediatePropagation()
-      onAttempt()
-    }
-    row.addEventListener('click', handler, true)
-    return () => row.removeEventListener('click', handler, true)
+    return interceptRowEvents(row, onAttempt)
   }
-}
-
-function findTitleElement(row: Element): Element | null {
-  const candidates = row.querySelectorAll('div, span, p')
-  for (const el of candidates) {
-    if (el.querySelector('button') || el.querySelector('svg')) continue
-    if (el.getAttribute('data-acl-btn') !== null) continue
-    const text = el.textContent?.trim()
-    if (text && text.length > 0 && text.length < 200 && el.childElementCount <= 1) {
-      return el
-    }
-  }
-  return row
 }

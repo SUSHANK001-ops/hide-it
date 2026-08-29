@@ -1,19 +1,18 @@
 /**
  * Qwen Adapter
  *
- * Targets: chat.qwen.ai
- *
- * DOM Selectors (as of Aug 2026 — likely to change):
- *   Sidebar root: Navigation panel / aside with conversation list
- *   Chat rows:    Links or items representing conversations
- *   Chat ID:      Extracted from URL patterns or data attributes
- *
- * If Qwen changes its UI, ONLY this file needs updating.
+ * Targets: chat.qwen.ai, qwen.ai
  */
 
 import type { SiteAdapter } from '~/core/types'
+import {
+  findBestTitleElement,
+  maskChatTitle,
+  unmaskChatTitle,
+  interceptRowEvents,
+  injectStandardLockButton
+} from '~/core/dom-utils'
 
-const LOCKED_ATTR = 'data-acl-locked'
 const originalTitles = new WeakMap<Element, string>()
 
 export const qwenAdapter: SiteAdapter = {
@@ -30,31 +29,27 @@ export const qwenAdapter: SiteAdapter = {
       document.querySelector('[class*="history"]') ??
       document.querySelector('aside') ??
       document.querySelector('nav') ??
-      null
+      document.body
     )
   },
 
   getChatRows(): Element[] {
-    const root = this.getSidebarRoot()
-    if (!root) return []
+    const root = this.getSidebarRoot() ?? document
 
-    const links = root.querySelectorAll('a[href*="/chat/"], a[href*="/c/"]')
-    if (links.length > 0) return Array.from(links)
+    const links = Array.from(root.querySelectorAll<HTMLAnchorElement>('a[href*="/chat/"], a[href*="/c/"]'))
+    if (links.length > 0) return links
 
-    const items = root.querySelectorAll('[class*="conversation"], [class*="chat-item"], [data-session-id]')
-    if (items.length > 0) return Array.from(items)
+    const items = Array.from(root.querySelectorAll('[class*="conversation"], [class*="chat-item"], [data-session-id]'))
+    if (items.length > 0) return items
 
-    return Array.from(root.querySelectorAll('a[href]')).filter((a) => {
-      const href = a.getAttribute('href') ?? ''
-      return href.includes('/chat') || href.includes('/c/')
-    })
+    return Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/chat"]'))
   },
 
   getChatId(row: Element): string | null {
     const href = row.getAttribute('href') ?? row.closest('a')?.getAttribute('href')
     if (href) {
       const match = href.match(/\/(?:chat|c)\/([a-zA-Z0-9_-]+)/i)
-      if (match) return match[1]
+      if (match && match[1] !== 'new') return match[1]
     }
     return row.getAttribute('data-session-id') ?? row.getAttribute('data-chat-id') ?? null
   },
@@ -62,30 +57,16 @@ export const qwenAdapter: SiteAdapter = {
   getChatTitle(row: Element): string {
     const saved = originalTitles.get(row)
     if (saved) return saved
-    const titleEl = findTitleElement(row)
+    const titleEl = findBestTitleElement(row)
     return titleEl?.textContent?.trim() ?? 'Untitled chat'
   },
 
   hideChatTitle(row: Element, lockedLabel: string): void {
-    if (row.getAttribute(LOCKED_ATTR) === 'true') return
-    const titleEl = findTitleElement(row)
-    if (titleEl) {
-      const originalTitle = titleEl.textContent?.trim() ?? ''
-      if (originalTitle && originalTitle !== lockedLabel) {
-        originalTitles.set(row, originalTitle)
-      }
-      titleEl.textContent = lockedLabel
-    }
-    row.setAttribute(LOCKED_ATTR, 'true')
-    ;(row as HTMLElement).style.opacity = '0.6'
+    maskChatTitle(row, lockedLabel, originalTitles)
   },
 
   restoreChatTitle(row: Element, originalTitle: string): void {
-    const titleEl = findTitleElement(row)
-    if (titleEl) titleEl.textContent = originalTitle
-    row.removeAttribute(LOCKED_ATTR)
-    originalTitles.delete(row)
-    ;(row as HTMLElement).style.opacity = ''
+    unmaskChatTitle(row, originalTitle, originalTitles)
   },
 
   injectLockButton(
@@ -94,55 +75,7 @@ export const qwenAdapter: SiteAdapter = {
     isLocked: boolean,
     onToggle: () => void
   ): void {
-    const existing = row.querySelector('[data-acl-btn]')
-    if (existing) existing.remove()
-
-    const btn = document.createElement('button')
-    btn.setAttribute('data-acl-btn', chatId)
-    btn.title = isLocked ? 'Unlock chat' : 'Lock chat'
-    btn.textContent = isLocked ? '🔓' : '🔒'
-    btn.setAttribute('style', `
-      position: absolute;
-      right: 8px;
-      top: 50%;
-      transform: translateY(-50%);
-      background: none;
-      border: none;
-      cursor: pointer;
-      font-size: 14px;
-      padding: 4px 6px;
-      border-radius: 6px;
-      opacity: ${isLocked ? '0.6' : '0'};
-      transition: opacity 0.15s, background 0.15s;
-      z-index: 10;
-      line-height: 1;
-    `)
-
-    btn.addEventListener('click', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      onToggle()
-    })
-
-    const rowEl = row as HTMLElement
-    if (getComputedStyle(rowEl).position === 'static') rowEl.style.position = 'relative'
-
-    if (!rowEl.hasAttribute('data-acl-hover-bound')) {
-      rowEl.setAttribute('data-acl-hover-bound', 'true')
-      rowEl.addEventListener('mouseenter', () => {
-        const b = rowEl.querySelector('[data-acl-btn]') as HTMLElement | null
-        if (b) b.style.opacity = '1'
-      })
-      rowEl.addEventListener('mouseleave', () => {
-        const b = rowEl.querySelector('[data-acl-btn]') as HTMLElement | null
-        if (b) {
-          const isL = rowEl.getAttribute(LOCKED_ATTR) === 'true'
-          b.style.opacity = isL ? '0.6' : '0'
-        }
-      })
-    }
-
-    rowEl.appendChild(btn)
+    injectStandardLockButton(row, chatId, isLocked, onToggle, '30px')
   },
 
   interceptNavigation(
@@ -150,26 +83,6 @@ export const qwenAdapter: SiteAdapter = {
     _chatId: string,
     onAttempt: () => void
   ): (() => void) | null {
-    const handler = (e: Event) => {
-      e.preventDefault()
-      e.stopPropagation()
-      e.stopImmediatePropagation()
-      onAttempt()
-    }
-    row.addEventListener('click', handler, true)
-    return () => row.removeEventListener('click', handler, true)
+    return interceptRowEvents(row, onAttempt)
   }
-}
-
-function findTitleElement(row: Element): Element | null {
-  const candidates = row.querySelectorAll('div, span, p')
-  for (const el of candidates) {
-    if (el.querySelector('button') || el.querySelector('svg')) continue
-    if (el.getAttribute('data-acl-btn') !== null) continue
-    const text = el.textContent?.trim()
-    if (text && text.length > 0 && text.length < 200 && el.childElementCount <= 1) {
-      return el
-    }
-  }
-  return row
 }

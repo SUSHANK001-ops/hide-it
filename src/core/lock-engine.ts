@@ -62,20 +62,19 @@ export async function applyLocks(adapter: SiteAdapter): Promise<void> {
     const rowKey = `${adapter.siteId}:${chatId}`
 
     if (isLocked) {
-      // Hide the title
+      // Continuously enforce masked title
       adapter.hideChatTitle(row, '🔒 Locked chat')
 
-      // Intercept navigation
+      // Intercept navigation and interactions
       if (!interceptCleanups.has(rowKey)) {
         const cleanup = adapter.interceptNavigation(row, chatId, () => {
-          handleLockedChatClick(adapter, chatId)
+          handleLockedChatClick(adapter, row, chatId)
         })
         if (cleanup) {
           interceptCleanups.set(rowKey, cleanup)
         }
       }
     } else {
-      // If it was previously locked, restore (handled by adapter internally)
       // Clean up any navigation intercept
       const cleanup = interceptCleanups.get(rowKey)
       if (cleanup) {
@@ -84,33 +83,31 @@ export async function applyLocks(adapter: SiteAdapter): Promise<void> {
       }
     }
 
-    // Inject lock/unlock toggle button
-    if (!injectedButtons.has(rowKey) || !row.querySelector('[data-acl-btn]')) {
-      injectedButtons.delete(rowKey)
-      adapter.injectLockButton(row, chatId, isLocked, () => {
-        handleLockToggle(adapter, row, chatId, isLocked)
-      })
-      injectedButtons.add(rowKey)
-    }
+    // Inject/refresh lock/unlock toggle button
+    adapter.injectLockButton(row, chatId, isLocked, () => {
+      handleLockToggle(adapter, row, chatId, isLocked)
+    })
+    injectedButtons.add(rowKey)
   }
 }
 
 /**
- * Handle clicking a locked chat — prompt for password
+ * Handle clicking a locked chat — prompt for password and navigate upon success
  */
 async function handleLockedChatClick(
   adapter: SiteAdapter,
+  row: Element,
   chatId: string
 ): Promise<void> {
   if (sessionUnlocked) {
     // Already authenticated this session — allow navigation
+    navigateRow(row)
     return
   }
 
   const passwordExists = await hasPassword()
 
   if (!passwordExists) {
-    // First run — shouldn't happen if they locked a chat, but safety
     showPasswordModal({
       mode: 'set',
       async onSubmit(password: string) {
@@ -118,6 +115,7 @@ async function handleLockedChatClick(
         await setPasswordHash(hash)
         sessionUnlocked = true
         notifySessionState(true)
+        navigateRow(row)
         return true
       }
     })
@@ -133,10 +131,23 @@ async function handleLockedChatClick(
       if (valid) {
         sessionUnlocked = true
         notifySessionState(true)
+        setTimeout(() => navigateRow(row), 100)
       }
       return valid
     }
   })
+}
+
+/**
+ * Trigger navigation on an unlocked row
+ */
+function navigateRow(row: Element): void {
+  const link = (row.tagName === 'A' ? row : row.querySelector('a')) as HTMLAnchorElement | null
+  if (link && link.href) {
+    link.click()
+  } else if ((row as HTMLElement).click) {
+    (row as HTMLElement).click()
+  }
 }
 
 /**
@@ -191,7 +202,6 @@ async function handleLockToggle(
       interceptCleanups.delete(`${adapter.siteId}:${chatId}`)
     }
     injectedButtons.delete(`${adapter.siteId}:${chatId}`)
-    // Restore title
     if (entry) {
       adapter.restoreChatTitle(row, entry.title)
     }
@@ -208,7 +218,6 @@ async function handleLockToggle(
           await setPasswordHash(hash)
           sessionUnlocked = true
           notifySessionState(true)
-          // Now lock the chat
           const title = adapter.getChatTitle(row)
           await lockChat({
             siteId: adapter.siteId,
