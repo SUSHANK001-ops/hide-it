@@ -163,9 +163,17 @@ async function handleLockToggle(
           if (valid) {
             sessionUnlocked = true
             notifySessionState(true)
+            const entry = await getLockedChat(adapter.siteId, chatId)
             await unlockChat(adapter.siteId, chatId)
-            // Force re-apply to update UI
+            const cleanup = interceptCleanups.get(`${adapter.siteId}:${chatId}`)
+            if (cleanup) {
+              cleanup()
+              interceptCleanups.delete(`${adapter.siteId}:${chatId}`)
+            }
             injectedButtons.delete(`${adapter.siteId}:${chatId}`)
+            if (entry) {
+              adapter.restoreChatTitle(row, entry.title)
+            }
             await applyLocks(adapter)
           }
           return valid
@@ -175,6 +183,7 @@ async function handleLockToggle(
     }
 
     // Already authenticated — unlock directly
+    const entry = await getLockedChat(adapter.siteId, chatId)
     await unlockChat(adapter.siteId, chatId)
     const cleanup = interceptCleanups.get(`${adapter.siteId}:${chatId}`)
     if (cleanup) {
@@ -183,7 +192,6 @@ async function handleLockToggle(
     }
     injectedButtons.delete(`${adapter.siteId}:${chatId}`)
     // Restore title
-    const entry = await getLockedChat(adapter.siteId, chatId)
     if (entry) {
       adapter.restoreChatTitle(row, entry.title)
     }
