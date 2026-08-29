@@ -12,6 +12,20 @@ import {
 import { hashPassword, verifyPassword } from '~/core/crypto'
 import './popup.css'
 
+/** Mask a chat title: show only first word + asterisks */
+function maskTitle(title: string): string {
+  if (!title || title === 'Untitled chat') return '🔒 ****'
+  const words = title.trim().split(/\s+/)
+  const first = words[0]
+  if (words.length === 1) {
+    // Single word: show first 2 chars + asterisks
+    if (first.length <= 2) return first + '****'
+    return first.slice(0, 2) + '****'
+  }
+  // Multiple words: show first word + asterisks for the rest
+  return first + ' ' + words.slice(1).map(() => '****').join(' ')
+}
+
 export default function Popup() {
   const [activeTab, setActiveTab] = useState<'vault' | 'settings'>('vault')
   const [lockedChats, setLockedChats] = useState<LockedChatEntry[]>([])
@@ -42,17 +56,6 @@ export default function Popup() {
 
     const s = await getSettings()
     setSettingsState(s)
-
-    // Check background for active session state
-    try {
-      chrome.runtime.sendMessage({ type: 'IS_SESSION_UNLOCKED' }, (res) => {
-        if (res?.unlocked) {
-          setIsUnlocked(true)
-        }
-      })
-    } catch {
-      // Ignore fallback
-    }
   }
 
   async function handleUnlockVault(e: React.FormEvent) {
@@ -68,7 +71,7 @@ export default function Popup() {
       await setPasswordHash(hash)
       setPasswordExists(true)
       setIsUnlocked(true)
-      chrome.runtime.sendMessage({ type: 'SESSION_UNLOCKED' })
+      setPasswordInput('')
       return
     }
 
@@ -79,7 +82,6 @@ export default function Popup() {
     if (valid) {
       setIsUnlocked(true)
       setPasswordInput('')
-      chrome.runtime.sendMessage({ type: 'SESSION_UNLOCKED' })
     } else {
       setErrorMsg('Incorrect password')
     }
@@ -147,8 +149,8 @@ export default function Popup() {
             <form onSubmit={handleUnlockVault} className="vault-auth-box">
               <p>
                 {passwordExists
-                  ? 'Enter master password to reveal locked chats'
-                  : 'Set master password to get started'}
+                  ? 'Enter master password to manage locked chats'
+                  : 'Set a master password to get started'}
               </p>
 
               <input
@@ -204,7 +206,9 @@ export default function Popup() {
                     <div key={`${chat.siteId}:${chat.chatId}`} className="chat-item">
                       <div className="chat-info">
                         <span className="chat-site-badge">{chat.siteId}</span>
-                        <span className="chat-title">{chat.title}</span>
+                        <span className="chat-title" title={maskTitle(chat.title)}>
+                          {maskTitle(chat.title)}
+                        </span>
                       </div>
                       <button
                         className="unlock-btn"
@@ -263,7 +267,7 @@ export default function Popup() {
             onSubmit={handleChangePassword}
             style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <span className="setting-label">
-              {passwordExists ? 'Change Password' : 'Set Password'}
+              {passwordExists ? 'Change Master Password' : 'Set Master Password'}
             </span>
 
             <input

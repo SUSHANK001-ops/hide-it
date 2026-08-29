@@ -1,15 +1,12 @@
 /**
  * lock-engine.ts — Site-agnostic orchestrator.
  *
- * Given any SiteAdapter, this engine:
- *  1. Scans chat rows and applies lock state (hide titles, inject buttons)
- *  2. Manages password prompt flow:
- *     - If no password exists yet: prompts ONCE to create password before locking.
- *     - If password exists: locks immediately with 0 prompts.
- *     - When unlocking (clicking chat row or toggle button): ALWAYS prompts for password.
- *  3. Intercepts navigation on locked chats.
- *
- * Contains ZERO site-specific selectors or DOM logic.
+ * Password flow:
+ *   - FIRST TIME: When user clicks lock with no master password set,
+ *     prompts ONCE to create a password. Saves it permanently.
+ *   - LOCKING: If password already exists, locks IMMEDIATELY (zero prompts).
+ *   - UNLOCKING: ALWAYS prompts for password (every single time).
+ *   - When a chat is locked while it's currently open, navigates away.
  */
 
 import type { SiteAdapter } from './types'
@@ -87,7 +84,6 @@ async function handleLockedChatClick(
   const passwordExists = await hasPassword()
 
   if (!passwordExists) {
-    // If somehow no password was set, prompt to create one
     showPasswordModal({
       mode: 'set',
       async onSubmit(password: string) {
@@ -100,7 +96,7 @@ async function handleLockedChatClick(
     return
   }
 
-  // Always require password to unlock and open chat
+  // Always require password to open a locked chat
   showPasswordModal({
     mode: 'verify',
     async onSubmit(password: string) {
@@ -128,9 +124,39 @@ function navigateRow(row: Element): void {
 }
 
 /**
+ * Navigate away from the current chat to the site's home/new-chat page.
+ * This is called after locking a chat that is currently open.
+ */
+function navigateAway(adapter: SiteAdapter, chatId: string): void {
+  const currentPath = window.location.pathname + window.location.search
+  const currentHref = window.location.href
+
+  // Check if the user is currently viewing the chat that was just locked
+  const isViewingLockedChat = (
+    currentPath.includes(chatId) ||
+    currentHref.includes(chatId)
+  )
+
+  if (!isViewingLockedChat) return
+
+  // Navigate to the site's home / new-chat page
+  const homeUrls: Record<string, string> = {
+    chatgpt: 'https://chatgpt.com/',
+    claude: 'https://claude.ai/new',
+    gemini: 'https://gemini.google.com/app',
+    deepseek: 'https://chat.deepseek.com/',
+    qwen: 'https://chat.qwen.ai/',
+    kimi: window.location.origin + '/'
+  }
+
+  const homeUrl = homeUrls[adapter.siteId] ?? window.location.origin + '/'
+  window.location.href = homeUrl
+}
+
+/**
  * Handle the lock/unlock toggle button click:
- * - When locking: if password is set, locks IMMEDIATELY (no prompt). If not set, asks to create password ONCE.
- * - When unlocking: ALWAYS asks for password to unlock.
+ * - Locking: instant if password exists, else asks to set password once.
+ * - Unlocking: ALWAYS asks for password.
  */
 async function handleLockToggle(
   adapter: SiteAdapter,
@@ -139,7 +165,7 @@ async function handleLockToggle(
   currentlyLocked: boolean
 ): Promise<void> {
   if (currentlyLocked) {
-    // UNLOCKING — Always prompt for password
+    // ── UNLOCKING — Always prompt for password ──
     const passwordExists = await hasPassword()
     if (!passwordExists) return
 
@@ -167,17 +193,16 @@ async function handleLockToggle(
       }
     })
   } else {
-    // LOCKING — Check if password exists
+    // ── LOCKING ──
     const passwordExists = await hasPassword()
 
     if (!passwordExists) {
-      // First time only: ask user to set a master password
+      // First time only: set master password then lock
       showPasswordModal({
         mode: 'set',
         async onSubmit(password: string) {
           const hash = await hashPassword(password)
           await setPasswordHash(hash)
-          // Lock the chat immediately
           const title = adapter.getChatTitle(row)
           await lockChat({
             siteId: adapter.siteId,
@@ -187,13 +212,15 @@ async function handleLockToggle(
           })
           injectedButtons.delete(`${adapter.siteId}:${chatId}`)
           await applyLocks(adapter)
+          // Navigate away if currently viewing this chat
+          navigateAway(adapter, chatId)
           return true
         }
       })
       return
     }
 
-    // Password already exists: LOCK IMMEDIATELY without asking for password!
+    // Password exists: LOCK IMMEDIATELY (zero prompts)
     const title = adapter.getChatTitle(row)
     await lockChat({
       siteId: adapter.siteId,
@@ -203,19 +230,17 @@ async function handleLockToggle(
     })
     injectedButtons.delete(`${adapter.siteId}:${chatId}`)
     await applyLocks(adapter)
+    // Navigate away if currently viewing this chat
+    navigateAway(adapter, chatId)
   }
 }
 
-/**
- * Force dismiss any open modal
- */
+/** Force dismiss any open modal */
 export function relockSession(): void {
   dismissModal()
 }
 
-/**
- * Clear injection tracking (call when the sidebar is fully replaced)
- */
+/** Clear injection tracking (call when the sidebar is fully replaced) */
 export function resetInjectionState(): void {
   injectedButtons.clear()
   for (const cleanup of interceptCleanups.values()) {
