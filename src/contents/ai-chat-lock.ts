@@ -11,6 +11,8 @@ export const config: PlasmoCSConfig = {
     'https://gemini.google.com/*',
     'https://chat.deepseek.com/*',
     'https://chat.qwen.ai/*',
+    'https://kimi.ai/*',
+    'https://www.kimi.ai/*',
     'https://kimi.com/*',
     'https://kimi.moonshot.cn/*'
   ],

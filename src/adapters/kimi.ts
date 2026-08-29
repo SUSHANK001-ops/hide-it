@@ -21,6 +21,7 @@ export const kimiAdapter: SiteAdapter = {
 
   matches(hostname: string): boolean {
     return (
+      hostname.includes('kimi.ai') ||
       hostname.includes('kimi.com') ||
       hostname.includes('kimi.moonshot.cn')
     )
