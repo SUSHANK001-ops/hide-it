@@ -3,11 +3,13 @@
  *
  * Given any SiteAdapter, this engine:
  *  1. Scans chat rows and applies lock state (hide titles, inject buttons)
- *  2. Manages password prompt flow (first-run set / verify to unlock)
- *  3. Intercepts navigation on locked chats
+ *  2. Manages password prompt flow:
+ *     - If no password exists yet: prompts ONCE to create password before locking.
+ *     - If password exists: locks immediately with 0 prompts.
+ *     - When unlocking (clicking chat row or toggle button): ALWAYS prompts for password.
+ *  3. Intercepts navigation on locked chats.
  *
  * Contains ZERO site-specific selectors or DOM logic.
- * The only DOM it touches is the password modal (from modal.ts).
  */
 
 import type { SiteAdapter } from './types'
@@ -28,23 +30,6 @@ const interceptCleanups = new Map<string, () => void>()
 
 /** Tracks which rows already have lock buttons injected */
 const injectedButtons = new Set<string>()
-
-/** Whether the user has authenticated this session */
-let sessionUnlocked = false
-
-/** Listen for session lock/unlock messages from background */
-if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === 'SESSION_LOCKED') {
-      sessionUnlocked = false
-    }
-  })
-}
-
-/** Check if user has authenticated this session */
-export function isSessionUnlocked(): boolean {
-  return sessionUnlocked
-}
 
 /**
  * Apply lock state to all visible chat rows.
@@ -92,29 +77,22 @@ export async function applyLocks(adapter: SiteAdapter): Promise<void> {
 }
 
 /**
- * Handle clicking a locked chat — prompt for password and navigate upon success
+ * Handle clicking a locked chat — ALWAYS prompts for password to view
  */
 async function handleLockedChatClick(
   adapter: SiteAdapter,
   row: Element,
   chatId: string
 ): Promise<void> {
-  if (sessionUnlocked) {
-    // Already authenticated this session — allow navigation
-    navigateRow(row)
-    return
-  }
-
   const passwordExists = await hasPassword()
 
   if (!passwordExists) {
+    // If somehow no password was set, prompt to create one
     showPasswordModal({
       mode: 'set',
       async onSubmit(password: string) {
         const hash = await hashPassword(password)
         await setPasswordHash(hash)
-        sessionUnlocked = true
-        notifySessionState(true)
         navigateRow(row)
         return true
       }
@@ -122,6 +100,7 @@ async function handleLockedChatClick(
     return
   }
 
+  // Always require password to unlock and open chat
   showPasswordModal({
     mode: 'verify',
     async onSubmit(password: string) {
@@ -129,8 +108,6 @@ async function handleLockedChatClick(
       if (!storedHash) return false
       const valid = await verifyPassword(password, storedHash)
       if (valid) {
-        sessionUnlocked = true
-        notifySessionState(true)
         setTimeout(() => navigateRow(row), 100)
       }
       return valid
@@ -151,7 +128,9 @@ function navigateRow(row: Element): void {
 }
 
 /**
- * Handle the lock/unlock toggle button click
+ * Handle the lock/unlock toggle button click:
+ * - When locking: if password is set, locks IMMEDIATELY (no prompt). If not set, asks to create password ONCE.
+ * - When unlocking: ALWAYS asks for password to unlock.
  */
 async function handleLockToggle(
   adapter: SiteAdapter,
@@ -160,64 +139,45 @@ async function handleLockToggle(
   currentlyLocked: boolean
 ): Promise<void> {
   if (currentlyLocked) {
-    // Unlocking — need password
-    if (!sessionUnlocked) {
-      const passwordExists = await hasPassword()
-      if (!passwordExists) return
+    // UNLOCKING — Always prompt for password
+    const passwordExists = await hasPassword()
+    if (!passwordExists) return
 
-      showPasswordModal({
-        mode: 'verify',
-        async onSubmit(password: string) {
-          const storedHash = await getPasswordHash()
-          if (!storedHash) return false
-          const valid = await verifyPassword(password, storedHash)
-          if (valid) {
-            sessionUnlocked = true
-            notifySessionState(true)
-            const entry = await getLockedChat(adapter.siteId, chatId)
-            await unlockChat(adapter.siteId, chatId)
-            const cleanup = interceptCleanups.get(`${adapter.siteId}:${chatId}`)
-            if (cleanup) {
-              cleanup()
-              interceptCleanups.delete(`${adapter.siteId}:${chatId}`)
-            }
-            injectedButtons.delete(`${adapter.siteId}:${chatId}`)
-            if (entry) {
-              adapter.restoreChatTitle(row, entry.title)
-            }
-            await applyLocks(adapter)
+    showPasswordModal({
+      mode: 'verify',
+      async onSubmit(password: string) {
+        const storedHash = await getPasswordHash()
+        if (!storedHash) return false
+        const valid = await verifyPassword(password, storedHash)
+        if (valid) {
+          const entry = await getLockedChat(adapter.siteId, chatId)
+          await unlockChat(adapter.siteId, chatId)
+          const cleanup = interceptCleanups.get(`${adapter.siteId}:${chatId}`)
+          if (cleanup) {
+            cleanup()
+            interceptCleanups.delete(`${adapter.siteId}:${chatId}`)
           }
-          return valid
+          injectedButtons.delete(`${adapter.siteId}:${chatId}`)
+          if (entry) {
+            adapter.restoreChatTitle(row, entry.title)
+          }
+          await applyLocks(adapter)
         }
-      })
-      return
-    }
-
-    // Already authenticated — unlock directly
-    const entry = await getLockedChat(adapter.siteId, chatId)
-    await unlockChat(adapter.siteId, chatId)
-    const cleanup = interceptCleanups.get(`${adapter.siteId}:${chatId}`)
-    if (cleanup) {
-      cleanup()
-      interceptCleanups.delete(`${adapter.siteId}:${chatId}`)
-    }
-    injectedButtons.delete(`${adapter.siteId}:${chatId}`)
-    if (entry) {
-      adapter.restoreChatTitle(row, entry.title)
-    }
-    await applyLocks(adapter)
+        return valid
+      }
+    })
   } else {
-    // Locking — need password set first
+    // LOCKING — Check if password exists
     const passwordExists = await hasPassword()
 
     if (!passwordExists) {
+      // First time only: ask user to set a master password
       showPasswordModal({
         mode: 'set',
         async onSubmit(password: string) {
           const hash = await hashPassword(password)
           await setPasswordHash(hash)
-          sessionUnlocked = true
-          notifySessionState(true)
+          // Lock the chat immediately
           const title = adapter.getChatTitle(row)
           await lockChat({
             siteId: adapter.siteId,
@@ -233,34 +193,7 @@ async function handleLockToggle(
       return
     }
 
-    // If not authenticated this session, require password first
-    if (!sessionUnlocked) {
-      showPasswordModal({
-        mode: 'verify',
-        async onSubmit(password: string) {
-          const storedHash = await getPasswordHash()
-          if (!storedHash) return false
-          const valid = await verifyPassword(password, storedHash)
-          if (valid) {
-            sessionUnlocked = true
-            notifySessionState(true)
-            const title = adapter.getChatTitle(row)
-            await lockChat({
-              siteId: adapter.siteId,
-              chatId,
-              title,
-              lockedAt: Date.now()
-            })
-            injectedButtons.delete(`${adapter.siteId}:${chatId}`)
-            await applyLocks(adapter)
-          }
-          return valid
-        }
-      })
-      return
-    }
-
-    // Authenticated — lock directly
+    // Password already exists: LOCK IMMEDIATELY without asking for password!
     const title = adapter.getChatTitle(row)
     await lockChat({
       siteId: adapter.siteId,
@@ -273,22 +206,10 @@ async function handleLockToggle(
   }
 }
 
-/** Notify background of session state change */
-function notifySessionState(unlocked: boolean): void {
-  try {
-    chrome.runtime.sendMessage({
-      type: unlocked ? 'SESSION_UNLOCKED' : 'SESSION_LOCKED'
-    })
-  } catch {
-    // Extension context may be invalidated
-  }
-}
-
 /**
- * Force re-lock the session (called from background on idle timeout)
+ * Force dismiss any open modal
  */
 export function relockSession(): void {
-  sessionUnlocked = false
   dismissModal()
 }
 
