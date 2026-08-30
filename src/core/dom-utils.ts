@@ -151,6 +151,9 @@ export function interceptRowEvents(
   onAttempt: () => void
 ): () => void {
   const handleInteraction = (e: Event) => {
+    // Allow programmatic clicks (like our own navigateRow) to pass through without interception
+    if (!e.isTrusted) return
+
     // Let clicks on the lock toggle button pass through to their own listener
     const target = e.target as Element | null
     if (target && (target.getAttribute('data-acl-btn') !== null || target.closest('[data-acl-btn]'))) {
