@@ -1,90 +1,63 @@
-# 🔒 AI Chat Lock — Browser Extension
+# Hide-it 🔒
 
-A Manifest V3 browser extension built with **Plasmo**, **React**, and **TypeScript** that allows users to password-lock individual AI chat conversations across **6 major AI chat web applications**.
+**Hide-it** is a privacy-focused browser extension that allows you to password-protect individual chat conversations across popular AI platforms. Whether you're working on sensitive code, personal writing, or confidential business strategies, Hide-it ensures that your private chats remain for your eyes only.
 
----
+## Features
 
-## 🌟 Supported Sites
+- **Per-Chat Locking:** Secure individual conversations, not just the entire website.
+- **Master Password:** Use a single, secure master password to manage all your locked chats.
+- **Cross-Platform Vault:** View and manage all your locked chats across different AI platforms in one central popup vault.
+- **Privacy Masking:** 
+  - In the sidebar of the website, locked chats simply display as `🔒 Locked chat` so the topic is hidden.
+  - In the extension vault, titles are masked for extra privacy (e.g., `Write social media captions` becomes `W**** s***** m**** c*******`).
+- **Auto Re-lock:** Automatically locks your chats after a period of inactivity.
 
-1. **ChatGPT** (`chatgpt.com` / `chat.openai.com`)
-2. **Claude** (`claude.ai`)
-3. **Gemini** (`gemini.google.com`)
-4. **DeepSeek** (`chat.deepseek.com`)
-5. **Qwen** (`chat.qwen.ai`)
-6. **Kimi** (`kimi.com` / `kimi.moonshot.cn`)
+## Supported Platforms
 
----
+Currently, Hide-it officially supports securing chats on:
+- **ChatGPT** (chatgpt.com, chat.openai.com)
+- **Claude** (claude.ai)
+- **Gemini** (gemini.google.com)
+- **Kimi** (kimi.ai)
 
-## 🏗️ Architecture & Isolation Constraint
-
-The extension strictly decouples DOM targeting from business logic:
-
-```
-/src
-  /adapters           <-- ONLY site-specific DOM selectors live here
-    /chatgpt.ts
-    /claude.ts
-    /gemini.ts
-    /deepseek.ts
-    /qwen.ts
-    /kimi.ts
-    /types.ts         <-- SiteAdapter interface implemented by all 6
-    /index.ts         <-- Adapter registry
-  /core               <-- ZERO DOM logic
-    /lock-engine.ts   <-- Site-agnostic state & password flow
-    /storage.ts       <-- chrome.storage.local wrapper
-    /observer.ts      <-- MutationObserver factory
-    /crypto.ts       <-- Web Crypto API SHA-256 wrapper
-    /modal.ts        <-- Pure-DOM password prompt overlay
-  /contents
-    /ai-chat-lock.ts  <-- Entry point injected on all 6 sites
-  /popup
-    /index.tsx        <-- React Vault View popup
-    /popup.css
-  /background.ts       <-- Idle timer & badge management
-```
-
-> **Note on UI Updates**: When any of the 6 sites updates its layout or CSS classes in the future, **ONLY edit the corresponding `/src/adapters/<site>.ts` file**. None of the core engine, content script, or popup files will need modifications.
+*(Note: Additional AI platforms may be supported under the hood.)*
 
 ---
 
-## 🎯 Per-Site DOM Selectors Reference
+## How It Works: A Step-by-Step Guide
 
-| Site | Site ID | Adapter File | Sidebar Root Selectors | Chat Row Selectors | Chat ID Extraction Pattern |
-|---|---|---|---|---|---|
-| **ChatGPT** | `chatgpt` | [`chatgpt.ts`](file:///d:/webdevstuff/extension/src/adapters/chatgpt.ts) | `nav[aria-label="Chat history"]`, `nav` | `a[href*="/c/"]` | UUID regex `/c/([a-f0-9-]+)` from `href` |
-| **Claude** | `claude` | [`claude.ts`](file:///d:/webdevstuff/extension/src/adapters/claude.ts) | `[data-testid="chat-history"]`, `nav[aria-label*="chat"]` | `a[href*="/chat/"]` | UUID regex `/chat/([a-f0-9-]+)` from `href` |
-| **Gemini** | `gemini` | [`gemini.ts`](file:///d:/webdevstuff/extension/src/adapters/gemini.ts) | `div[role="navigation"]`, `mat-sidenav` | `a[href*="/app/"]`, `[role="listitem"] a` | Regex `/(?:app\|chat)\/([a-f0-9]+)` or `data-conversation-id` |
-| **DeepSeek**| `deepseek` | [`deepseek.ts`](file:///d:/webdevstuff/extension/src/adapters/deepseek.ts)| `[class*="sidebar"]`, `aside`, `nav[role="navigation"]` | `a[href*="/chat/"]`, `[data-chat-id]` | Regex `/chat/([a-zA-Z0-9_-]+)` or `data-chat-id` |
-| **Qwen** | `qwen` | [`qwen.ts`](file:///d:/webdevstuff/extension/src/adapters/qwen.ts) | `[class*="sidebar"]`, `aside`, `nav` | `a[href*="/chat/"]`, `a[href*="/c/"]` | Regex `/(?:chat\|c)\/([a-zA-Z0-9_-]+)` |
-| **Kimi** | `kimi` | [`kimi.ts`](file:///d:/webdevstuff/extension/src/adapters/kimi.ts) | `[class*="sidebar"]`, `aside`, `nav` | `a[href*="/chat/"]`, `[data-chat-id]` | Regex `/(?:chat\|c)\/([a-zA-Z0-9_-]+)` or `data-chat-id` |
+### 1. Setting Your Master Password
+The very first time you try to lock a chat, Hide-it will prompt you to create a **Master Password**. This password is encrypted and stored locally on your device. You will use this password to unlock your chats in the future. 
 
----
+### 2. Locking a Chat
+Once your master password is set, locking a chat is **instant**:
+- Hover over a chat in the sidebar of your favorite AI platform.
+- Click the sleek `🔓` (Unlock) icon to lock it.
+- If you were currently viewing that chat, Hide-it will instantly navigate you away to the homepage to hide the content.
+- The chat's title in the sidebar will instantly change to `🔒 Locked chat`, ensuring no one can see what the chat was about.
 
-## 🚀 Development & Loading into Chrome
+### 3. Unlocking a Chat
+When you want to resume a locked conversation:
+- Click the `🔒` (Lock) icon next to the chat in the sidebar.
+- A secure prompt will appear asking for your master password.
+- Enter your password. If correct, the original chat title will be restored, and you will be able to click on the chat to view it.
 
-### Prerequisites
-- Node.js (v18+)
-- `npm` or `pnpm`
+### 4. Using the Vault
+Click on the Hide-it extension icon in your browser toolbar to open the Vault.
+- You must enter your master password to access the Vault.
+- Inside the Vault, you will see a list of every locked chat across all supported platforms.
+- **Title Masking:** In the vault, titles are obfuscated. Only the first letter of each word is shown (e.g. `S***** p******`), keeping your topics discreet even when the vault is open.
+- **Inline Unlock:** Click the `🔓` icon next to any chat in the Vault. An inline password field will slide out. Enter your password to unlock the chat directly from the Vault.
 
-### Setup & Run
-```bash
-# Install dependencies
-npm install
-
-# Run Plasmo development server
-npm run dev
-```
-
-### Loading into Chrome
-1. Open Google Chrome and go to `chrome://extensions`
-2. Enable **Developer mode** (toggle in top right corner)
-3. Click **Load unpacked**
-4. Select the `build/chrome-mv3-dev` directory created by Plasmo inside this project folder
+### 5. Settings & Auto-Relock
+In the extension popup, switch to the **Settings** tab.
+- **Auto re-lock on idle:** Enable this to automatically lock all your unlocked chats if your browser is idle for a specified number of minutes (e.g., 5 minutes).
+- **Change Password:** You can change your Master Password securely from this menu at any time.
 
 ---
 
-## 🛡️ Security Features
-- **Zero Plaintext Storage**: Passwords are hashed using SHA-256 via Web Crypto API (`crypto.subtle`) before saving to `chrome.storage.local`.
-- **Title DOM Sanitization**: When a chat is locked, its real title string is completely replaced with `🔒 Locked chat` in DOM text nodes, preventing DOM inspection or background reading.
-- **Session Auto Re-Lock**: Configurable idle timeout (default 5 min) automatically locks open sessions when user is away.
+## Technical Details
+
+- **Security:** Hide-it uses PBKDF2 with SHA-256 and a random salt for secure password hashing. 
+- **Storage:** All data (including the password hash and the list of locked chats) is stored entirely locally on your machine using `chrome.storage.local`. Nothing is ever sent to a server.
+- **Framework:** Built with React, TypeScript, and Plasmo.

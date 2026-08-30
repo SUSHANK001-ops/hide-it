@@ -59,7 +59,7 @@ export async function applyLocks(adapter: SiteAdapter): Promise<void> {
 
       if (isLocked) {
         // Just say "Locked chat" in the sidebar as requested
-        const maskedLabel = '🔒 Locked chat'
+        const maskedLabel = `Locked chat`
 
         // Always enforce the masked title (in case React re-rendered the row)
         adapter.hideChatTitle(row, maskedLabel)
@@ -148,7 +148,7 @@ function navigateRow(row: Element): void {
   if (link?.href) {
     link.click()
   } else {
-    ;(row as HTMLElement).click()
+    ; (row as HTMLElement).click()
   }
 }
 

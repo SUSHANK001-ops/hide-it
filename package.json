@@ -1,8 +1,8 @@
 {
-  "name": "ai-chat-lock",
-  "displayName": "AI Chat Lock",
+  "name": "hide-it",
+  "displayName": "Hide-it",
   "version": "0.1.0",
-  "description": "Password-lock individual AI chat conversations across ChatGPT, Claude, Gemini, DeepSeek, Qwen, and Kimi",
+  "description": "Password-lock individual AI chat conversations across ChatGPT, Claude, Gemini, and Kimi.",
   "author": "Sushank",
   "scripts": {
     "dev": "npx plasmo dev",

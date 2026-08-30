@@ -171,7 +171,7 @@ export default function Popup() {
       <div className="header">
         <div className="logo-group">
           <Shield size={20} className="logo-icon" />
-          <h1 className="title">AI Chat Lock</h1>
+          <h1 className="title">Hide-it</h1>
         </div>
         <div className="tab-nav">
           <button className={`tab-btn ${activeTab === 'vault' ? 'active' : ''}`}
