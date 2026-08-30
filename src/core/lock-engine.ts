@@ -25,8 +25,20 @@ import { showPasswordModal, dismissModal } from './modal'
 /** Tracks which chats have had their navigation intercepted (cleanup fns) */
 const interceptCleanups = new Map<string, () => void>()
 
-/** Tracks which rows already have lock buttons injected */
-const injectedButtons = new Set<string>()
+/**
+ * Mask a chat title: first letter of each word visible, rest replaced with *.
+ * Example: "Hello World" → "H**** W****"
+ */
+export function maskTitle(title: string): string {
+  if (!title || title.trim().length === 0) return '🔒 Locked chat'
+  return title
+    .split(' ')
+    .map((word) => {
+      if (word.length === 0) return word
+      return word[0] + '*'.repeat(Math.max(0, word.length - 1))
+    })
+    .join(' ')
+}
 
 /**
  * Apply lock state to all visible chat rows.
@@ -44,10 +56,14 @@ export async function applyLocks(adapter: SiteAdapter): Promise<void> {
     const rowKey = `${adapter.siteId}:${chatId}`
 
     if (isLocked) {
-      // Continuously enforce masked title
-      adapter.hideChatTitle(row, '🔒 Locked chat')
+      // Get the stored real title to build the masked label
+      const entry = await getLockedChat(adapter.siteId, chatId)
+      const maskedLabel = entry ? maskTitle(entry.title) : '🔒 *** ****'
 
-      // Intercept navigation and interactions
+      // Continuously enforce masked title
+      adapter.hideChatTitle(row, maskedLabel)
+
+      // Intercept navigation
       if (!interceptCleanups.has(rowKey)) {
         const cleanup = adapter.interceptNavigation(row, chatId, () => {
           handleLockedChatClick(adapter, row, chatId)
@@ -65,11 +81,11 @@ export async function applyLocks(adapter: SiteAdapter): Promise<void> {
       }
     }
 
-    // Inject/refresh lock/unlock toggle button
+    // Re-inject button so the isLocked state is always current
     adapter.injectLockButton(row, chatId, isLocked, () => {
+      // Re-query isLocked at click time so it's always fresh
       handleLockToggle(adapter, row, chatId, isLocked)
     })
-    injectedButtons.add(rowKey)
   }
 }
 
@@ -125,13 +141,11 @@ function navigateRow(row: Element): void {
 
 /**
  * Navigate away from the current chat to the site's home/new-chat page.
- * This is called after locking a chat that is currently open.
  */
 function navigateAway(adapter: SiteAdapter, chatId: string): void {
   const currentPath = window.location.pathname + window.location.search
   const currentHref = window.location.href
 
-  // Check if the user is currently viewing the chat that was just locked
   const isViewingLockedChat = (
     currentPath.includes(chatId) ||
     currentHref.includes(chatId)
@@ -139,7 +153,6 @@ function navigateAway(adapter: SiteAdapter, chatId: string): void {
 
   if (!isViewingLockedChat) return
 
-  // Navigate to the site's home / new-chat page
   const homeUrls: Record<string, string> = {
     chatgpt: 'https://chatgpt.com/',
     claude: 'https://claude.ai/new',
@@ -183,7 +196,6 @@ async function handleLockToggle(
             cleanup()
             interceptCleanups.delete(`${adapter.siteId}:${chatId}`)
           }
-          injectedButtons.delete(`${adapter.siteId}:${chatId}`)
           if (entry) {
             adapter.restoreChatTitle(row, entry.title)
           }
@@ -210,9 +222,7 @@ async function handleLockToggle(
             title,
             lockedAt: Date.now()
           })
-          injectedButtons.delete(`${adapter.siteId}:${chatId}`)
           await applyLocks(adapter)
-          // Navigate away if currently viewing this chat
           navigateAway(adapter, chatId)
           return true
         }
@@ -220,7 +230,7 @@ async function handleLockToggle(
       return
     }
 
-    // Password exists: LOCK IMMEDIATELY (zero prompts)
+    // Password already set: LOCK IMMEDIATELY — no prompt needed
     const title = adapter.getChatTitle(row)
     await lockChat({
       siteId: adapter.siteId,
@@ -228,9 +238,7 @@ async function handleLockToggle(
       title,
       lockedAt: Date.now()
     })
-    injectedButtons.delete(`${adapter.siteId}:${chatId}`)
     await applyLocks(adapter)
-    // Navigate away if currently viewing this chat
     navigateAway(adapter, chatId)
   }
 }
@@ -242,7 +250,6 @@ export function relockSession(): void {
 
 /** Clear injection tracking (call when the sidebar is fully replaced) */
 export function resetInjectionState(): void {
-  injectedButtons.clear()
   for (const cleanup of interceptCleanups.values()) {
     cleanup()
   }
