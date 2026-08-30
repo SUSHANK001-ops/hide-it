@@ -58,9 +58,8 @@ export async function applyLocks(adapter: SiteAdapter): Promise<void> {
       const rowKey = `${adapter.siteId}:${chatId}`
 
       if (isLocked) {
-        // Fetch the stored original title for masking
-        const entry = await getLockedChat(adapter.siteId, chatId)
-        const maskedLabel = entry ? maskTitle(entry.title) : '🔒 L****'
+        // Just say "Locked chat" in the sidebar as requested
+        const maskedLabel = '🔒 Locked chat'
 
         // Always enforce the masked title (in case React re-rendered the row)
         adapter.hideChatTitle(row, maskedLabel)

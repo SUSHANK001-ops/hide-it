@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Lock, Unlock, Settings as SettingsIcon, Shield, X } from 'lucide-react'
 import type { ExtensionSettings, LockedChatEntry } from '~/core/types'
 import {
   getLockedChats,
@@ -169,14 +170,18 @@ export default function Popup() {
       {/* Header */}
       <div className="header">
         <div className="logo-group">
-          <span className="logo-icon">🔒</span>
+          <Shield size={20} className="logo-icon" />
           <h1 className="title">AI Chat Lock</h1>
         </div>
         <div className="tab-nav">
           <button className={`tab-btn ${activeTab === 'vault' ? 'active' : ''}`}
-            onClick={() => setActiveTab('vault')}>Vault</button>
+            onClick={() => setActiveTab('vault')}>
+            <Lock size={14} style={{ marginRight: 6 }} /> Vault
+          </button>
           <button className={`tab-btn ${activeTab === 'settings' ? 'active' : ''}`}
-            onClick={() => setActiveTab('settings')}>Settings</button>
+            onClick={() => setActiveTab('settings')}>
+            <SettingsIcon size={14} style={{ marginRight: 6 }} /> Settings
+          </button>
         </div>
       </div>
 
@@ -186,7 +191,10 @@ export default function Popup() {
           {!isVaultOpen ? (
             /* ── Auth gate ── */
             <form onSubmit={handleVaultSubmit} className="vault-auth-box">
-              <p>
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+                <Lock size={32} color="var(--primary-accent)" />
+              </div>
+              <p style={{ textAlign: 'center' }}>
                 {passwordExists
                   ? 'Enter master password to view locked chats'
                   : 'Create a master password to get started'}
@@ -200,7 +208,7 @@ export default function Popup() {
                 autoFocus
               />
               {vaultError && <div className="error-text">{vaultError}</div>}
-              <button type="submit" className="btn-primary">
+              <button type="submit" className="btn-primary" style={{ marginTop: 8 }}>
                 {passwordExists ? 'Open Vault' : 'Set Master Password'}
               </button>
             </form>
@@ -212,8 +220,9 @@ export default function Popup() {
                   LOCKED CHATS ({lockedChats.length})
                 </span>
                 <button
-                  style={{ background: 'none', border: 'none', color: 'var(--primary-accent)', cursor: 'pointer', fontSize: 12 }}
+                  className="lock-vault-btn"
                   onClick={() => { setIsVaultOpen(false); setUnlockingChatId(null) }}>
+                  <Lock size={12} style={{ marginRight: 4 }} />
                   Lock Vault
                 </button>
               </div>
@@ -237,13 +246,14 @@ export default function Popup() {
                               className="unlock-btn"
                               title="Unlock this chat"
                               onClick={() => startUnlock(chat)}>
-                              🔓
+                              <Unlock size={16} />
                             </button>
                           ) : (
                             <button
                               className="cancel-btn"
+                              title="Cancel"
                               onClick={cancelUnlock}>
-                              ✕
+                              <X size={16} />
                             </button>
                           )}
                         </div>
