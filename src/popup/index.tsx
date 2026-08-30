@@ -10,21 +10,8 @@ import {
   updateSettings
 } from '~/core/storage'
 import { hashPassword, verifyPassword } from '~/core/crypto'
+import { maskTitle } from '~/core/lock-engine'
 import './popup.css'
-
-/** Mask a chat title: show only first word + asterisks */
-function maskTitle(title: string): string {
-  if (!title || title === 'Untitled chat') return '🔒 ****'
-  const words = title.trim().split(/\s+/)
-  const first = words[0]
-  if (words.length === 1) {
-    // Single word: show first 2 chars + asterisks
-    if (first.length <= 2) return first + '****'
-    return first.slice(0, 2) + '****'
-  }
-  // Multiple words: show first word + asterisks for the rest
-  return first + ' ' + words.slice(1).map(() => '****').join(' ')
-}
 
 export default function Popup() {
   const [activeTab, setActiveTab] = useState<'vault' | 'settings'>('vault')
@@ -33,6 +20,12 @@ export default function Popup() {
   const [passwordInput, setPasswordInput] = useState('')
   const [passwordExists, setPasswordExists] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
+
+  // Per-chat unlock flow state
+  const [unlockingChat, setUnlockingChat] = useState<LockedChatEntry | null>(null)
+  const [unlockPassword, setUnlockPassword] = useState('')
+  const [unlockError, setUnlockError] = useState('')
+  const [unlockLoading, setUnlockLoading] = useState(false)
 
   // Settings
   const [settings, setSettingsState] = useState<ExtensionSettings>({
@@ -87,10 +80,40 @@ export default function Popup() {
     }
   }
 
-  async function handleUnlockSingleChat(siteId: string, chatId: string) {
-    await unlockChat(siteId, chatId)
-    const updated = await getLockedChats()
-    setLockedChats(updated)
+  /** Start the per-chat unlock flow — opens an inline password prompt */
+  function beginUnlockChat(chat: LockedChatEntry) {
+    setUnlockingChat(chat)
+    setUnlockPassword('')
+    setUnlockError('')
+  }
+
+  /** Confirm unlock: verify password then remove from storage */
+  async function confirmUnlockChat(e: React.FormEvent) {
+    e.preventDefault()
+    if (!unlockingChat) return
+
+    setUnlockError('')
+    setUnlockLoading(true)
+
+    const storedHash = await getPasswordHash()
+    if (!storedHash) {
+      setUnlockError('No password set')
+      setUnlockLoading(false)
+      return
+    }
+
+    const valid = await verifyPassword(unlockPassword, storedHash)
+    if (valid) {
+      await unlockChat(unlockingChat.siteId, unlockingChat.chatId)
+      const updated = await getLockedChats()
+      setLockedChats(updated)
+      setUnlockingChat(null)
+      setUnlockPassword('')
+    } else {
+      setUnlockError('Incorrect password')
+    }
+
+    setUnlockLoading(false)
   }
 
   async function handleSettingsChange(newS: Partial<ExtensionSettings>) {
@@ -142,6 +165,46 @@ export default function Popup() {
           </button>
         </div>
       </div>
+
+      {/* ── Inline unlock-chat modal ── */}
+      {unlockingChat && (
+        <div className="modal-overlay">
+          <div className="modal-card">
+            <h3 className="modal-title">🔓 Unlock Chat</h3>
+            <p className="modal-subtitle">
+              Enter your master password to unlock<br />
+              <strong>{maskTitle(unlockingChat.title)}</strong>
+            </p>
+            <form onSubmit={confirmUnlockChat} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <input
+                type="password"
+                className="input-field"
+                placeholder="Master password"
+                value={unlockPassword}
+                onChange={(e) => setUnlockPassword(e.target.value)}
+                autoFocus
+                disabled={unlockLoading}
+              />
+              {unlockError && <div className="error-text">{unlockError}</div>}
+              <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setUnlockingChat(null)}
+                  disabled={unlockLoading}>
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={unlockLoading}>
+                  {unlockLoading ? 'Verifying…' : 'Unlock'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {activeTab === 'vault' ? (
         <div className="card">
@@ -206,16 +269,14 @@ export default function Popup() {
                     <div key={`${chat.siteId}:${chat.chatId}`} className="chat-item">
                       <div className="chat-info">
                         <span className="chat-site-badge">{chat.siteId}</span>
-                        <span className="chat-title" title={maskTitle(chat.title)}>
+                        <span className="chat-title">
                           {maskTitle(chat.title)}
                         </span>
                       </div>
                       <button
                         className="unlock-btn"
                         title="Unlock chat"
-                        onClick={() =>
-                          handleUnlockSingleChat(chat.siteId, chat.chatId)
-                        }>
+                        onClick={() => beginUnlockChat(chat)}>
                         🔓
                       </button>
                     </div>
