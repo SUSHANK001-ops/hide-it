@@ -1,12 +1,10 @@
 /**
  * lock-engine.ts — Site-agnostic orchestrator.
  *
- * Password flow:
- *   - FIRST TIME: When user clicks lock with no master password set,
- *     prompts ONCE to create a password. Saves it permanently.
- *   - LOCKING: If password already exists, locks IMMEDIATELY (zero prompts).
- *   - UNLOCKING: ALWAYS prompts for password (every single time).
- *   - When a chat is locked while it's currently open, navigates away.
+ * Password rules:
+ *   - LOCKING: Instant if password exists. Only asks for password ONCE (first time ever).
+ *   - UNLOCKING: Always asks for password, every time.
+ *   - Clicking a locked chat: Always asks for password.
  */
 
 import type { SiteAdapter } from './types'
@@ -22,75 +20,94 @@ import {
 import { hashPassword, verifyPassword } from './crypto'
 import { showPasswordModal, dismissModal } from './modal'
 
-/** Tracks which chats have had their navigation intercepted (cleanup fns) */
+/** Tracks intercepted navigation cleanup functions */
 const interceptCleanups = new Map<string, () => void>()
 
 /**
- * Mask a chat title: first letter of each word visible, rest replaced with *.
- * Example: "Hello World" → "H**** W****"
+ * Mask a chat title: show first letter of each word, replace rest with *.
+ * "Hello World" → "H**** W****"
  */
 export function maskTitle(title: string): string {
-  if (!title || title.trim().length === 0) return '🔒 Locked chat'
+  if (!title || !title.trim()) return '🔒 L****'
   return title
     .split(' ')
-    .map((word) => {
-      if (word.length === 0) return word
-      return word[0] + '*'.repeat(Math.max(0, word.length - 1))
-    })
+    .filter((w) => w.length > 0)
+    .map((word) => word[0] + '*'.repeat(Math.max(0, word.length - 1)))
     .join(' ')
 }
 
+/** Guard against concurrent applyLocks calls */
+let applyingLocks = false
+
 /**
  * Apply lock state to all visible chat rows.
- * Called by the MutationObserver callback on every sidebar change.
  */
 export async function applyLocks(adapter: SiteAdapter): Promise<void> {
-  const lockedIds = await getLockedChatIds(adapter.siteId)
-  const rows = adapter.getChatRows()
+  if (applyingLocks) return
+  applyingLocks = true
 
-  for (const row of rows) {
-    const chatId = adapter.getChatId(row)
-    if (!chatId) continue
+  try {
+    const lockedIds = await getLockedChatIds(adapter.siteId)
+    const rows = adapter.getChatRows()
 
-    const isLocked = lockedIds.has(chatId)
-    const rowKey = `${adapter.siteId}:${chatId}`
+    for (const row of rows) {
+      const chatId = adapter.getChatId(row)
+      if (!chatId) continue
 
-    if (isLocked) {
-      // Get the stored real title to build the masked label
-      const entry = await getLockedChat(adapter.siteId, chatId)
-      const maskedLabel = entry ? maskTitle(entry.title) : '🔒 *** ****'
+      const isLocked = lockedIds.has(chatId)
+      const rowKey = `${adapter.siteId}:${chatId}`
 
-      // Continuously enforce masked title
-      adapter.hideChatTitle(row, maskedLabel)
+      if (isLocked) {
+        // Fetch the stored original title for masking
+        const entry = await getLockedChat(adapter.siteId, chatId)
+        const maskedLabel = entry ? maskTitle(entry.title) : '🔒 L****'
 
-      // Intercept navigation
-      if (!interceptCleanups.has(rowKey)) {
-        const cleanup = adapter.interceptNavigation(row, chatId, () => {
-          handleLockedChatClick(adapter, row, chatId)
-        })
+        // Always enforce the masked title (in case React re-rendered the row)
+        adapter.hideChatTitle(row, maskedLabel)
+
+        // Set up navigation interception (idempotent)
+        if (!interceptCleanups.has(rowKey)) {
+          const cleanup = adapter.interceptNavigation(row, chatId, () => {
+            handleLockedChatClick(adapter, row, chatId)
+          })
+          if (cleanup) interceptCleanups.set(rowKey, cleanup)
+        }
+      } else {
+        // Remove stale navigation interception
+        const cleanup = interceptCleanups.get(rowKey)
         if (cleanup) {
-          interceptCleanups.set(rowKey, cleanup)
+          cleanup()
+          interceptCleanups.delete(rowKey)
         }
       }
-    } else {
-      // Clean up any navigation intercept
-      const cleanup = interceptCleanups.get(rowKey)
-      if (cleanup) {
-        cleanup()
-        interceptCleanups.delete(rowKey)
-      }
-    }
 
-    // Re-inject button so the isLocked state is always current
-    adapter.injectLockButton(row, chatId, isLocked, () => {
-      // Re-query isLocked at click time so it's always fresh
-      handleLockToggle(adapter, row, chatId, isLocked)
-    })
+      // Re-read lock state at click time to avoid stale closure bugs
+      adapter.injectLockButton(row, chatId, isLocked, () => {
+        handleLockToggleFromStorage(adapter, row, chatId)
+      })
+    }
+  } finally {
+    applyingLocks = false
   }
 }
 
 /**
- * Handle clicking a locked chat — ALWAYS prompts for password to view
+ * Re-read lock state from storage at click time, then delegate to the
+ * correct lock or unlock flow. This prevents stale-closure bugs where
+ * the injected isLocked value no longer matches reality.
+ */
+async function handleLockToggleFromStorage(
+  adapter: SiteAdapter,
+  row: Element,
+  chatId: string
+): Promise<void> {
+  const lockedIds = await getLockedChatIds(adapter.siteId)
+  const currentlyLocked = lockedIds.has(chatId)
+  handleLockToggle(adapter, row, chatId, currentlyLocked)
+}
+
+/**
+ * Handle clicking a locked chat row — always prompts for password.
  */
 async function handleLockedChatClick(
   adapter: SiteAdapter,
@@ -112,7 +129,6 @@ async function handleLockedChatClick(
     return
   }
 
-  // Always require password to open a locked chat
   showPasswordModal({
     mode: 'verify',
     async onSubmit(password: string) {
@@ -127,31 +143,24 @@ async function handleLockedChatClick(
   })
 }
 
-/**
- * Trigger navigation on an unlocked row
- */
+/** Programmatically click/navigate the row link */
 function navigateRow(row: Element): void {
   const link = (row.tagName === 'A' ? row : row.querySelector('a')) as HTMLAnchorElement | null
-  if (link && link.href) {
+  if (link?.href) {
     link.click()
-  } else if ((row as HTMLElement).click) {
-    (row as HTMLElement).click()
+  } else {
+    ;(row as HTMLElement).click()
   }
 }
 
 /**
- * Navigate away from the current chat to the site's home/new-chat page.
+ * If the user is currently viewing the chat being locked, navigate away.
  */
 function navigateAway(adapter: SiteAdapter, chatId: string): void {
-  const currentPath = window.location.pathname + window.location.search
-  const currentHref = window.location.href
+  const path = window.location.pathname + window.location.search
+  const href = window.location.href
 
-  const isViewingLockedChat = (
-    currentPath.includes(chatId) ||
-    currentHref.includes(chatId)
-  )
-
-  if (!isViewingLockedChat) return
+  if (!path.includes(chatId) && !href.includes(chatId)) return
 
   const homeUrls: Record<string, string> = {
     chatgpt: 'https://chatgpt.com/',
@@ -162,14 +171,14 @@ function navigateAway(adapter: SiteAdapter, chatId: string): void {
     kimi: window.location.origin + '/'
   }
 
-  const homeUrl = homeUrls[adapter.siteId] ?? window.location.origin + '/'
-  window.location.href = homeUrl
+  window.location.href = homeUrls[adapter.siteId] ?? window.location.origin + '/'
 }
 
 /**
- * Handle the lock/unlock toggle button click:
- * - Locking: instant if password exists, else asks to set password once.
- * - Unlocking: ALWAYS asks for password.
+ * Handle the lock/unlock toggle:
+ * - LOCKING: Instant (no prompt) if password is already set.
+ *            Only asks to SET password on the very first lock ever.
+ * - UNLOCKING: Always asks for password.
  */
 async function handleLockToggle(
   adapter: SiteAdapter,
@@ -178,7 +187,7 @@ async function handleLockToggle(
   currentlyLocked: boolean
 ): Promise<void> {
   if (currentlyLocked) {
-    // ── UNLOCKING — Always prompt for password ──
+    // ── UNLOCKING — always verify password ──
     const passwordExists = await hasPassword()
     if (!passwordExists) return
 
@@ -209,17 +218,19 @@ async function handleLockToggle(
     const passwordExists = await hasPassword()
 
     if (!passwordExists) {
-      // First time only: set master password then lock
+      // First ever lock: ask user to create master password, then lock
       showPasswordModal({
         mode: 'set',
         async onSubmit(password: string) {
           const hash = await hashPassword(password)
           await setPasswordHash(hash)
+
+          // Read the REAL title before we touch the DOM
           const title = adapter.getChatTitle(row)
           await lockChat({
             siteId: adapter.siteId,
             chatId,
-            title,
+            title: title || 'Untitled chat',
             lockedAt: Date.now()
           })
           await applyLocks(adapter)
@@ -230,12 +241,13 @@ async function handleLockToggle(
       return
     }
 
-    // Password already set: LOCK IMMEDIATELY — no prompt needed
+    // Password already set — LOCK IMMEDIATELY, no prompt
+    // Read the REAL title BEFORE hideChatTitle mutates the DOM
     const title = adapter.getChatTitle(row)
     await lockChat({
       siteId: adapter.siteId,
       chatId,
-      title,
+      title: title || 'Untitled chat',
       lockedAt: Date.now()
     })
     await applyLocks(adapter)
@@ -243,15 +255,13 @@ async function handleLockToggle(
   }
 }
 
-/** Force dismiss any open modal */
+/** Dismiss any open modal (called on idle timeout) */
 export function relockSession(): void {
   dismissModal()
 }
 
-/** Clear injection tracking (call when the sidebar is fully replaced) */
+/** Clear all injection tracking */
 export function resetInjectionState(): void {
-  for (const cleanup of interceptCleanups.values()) {
-    cleanup()
-  }
+  for (const cleanup of interceptCleanups.values()) cleanup()
   interceptCleanups.clear()
 }

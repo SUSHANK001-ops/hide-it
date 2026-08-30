@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ExtensionSettings, LockedChatEntry } from '~/core/types'
 import {
   getLockedChats,
@@ -10,22 +10,36 @@ import {
   updateSettings
 } from '~/core/storage'
 import { hashPassword, verifyPassword } from '~/core/crypto'
-import { maskTitle } from '~/core/lock-engine'
 import './popup.css'
+
+// ─── Utility ────────────────────────────────────────────────────────────────
+
+/** Mask title — first letter of each word visible, rest asterisks */
+function maskTitle(title: string): string {
+  if (!title || !title.trim()) return '🔒 L****'
+  return title
+    .split(' ')
+    .filter((w) => w.length > 0)
+    .map((word) => word[0] + '*'.repeat(Math.max(0, word.length - 1)))
+    .join(' ')
+}
+
+// ─── Component ──────────────────────────────────────────────────────────────
 
 export default function Popup() {
   const [activeTab, setActiveTab] = useState<'vault' | 'settings'>('vault')
   const [lockedChats, setLockedChats] = useState<LockedChatEntry[]>([])
-  const [isUnlocked, setIsUnlocked] = useState(false)
-  const [passwordInput, setPasswordInput] = useState('')
+  const [isVaultOpen, setIsVaultOpen] = useState(false)
+  const [vaultPw, setVaultPw] = useState('')
   const [passwordExists, setPasswordExists] = useState(false)
-  const [errorMsg, setErrorMsg] = useState('')
+  const [vaultError, setVaultError] = useState('')
 
-  // Per-chat unlock flow state
-  const [unlockingChat, setUnlockingChat] = useState<LockedChatEntry | null>(null)
-  const [unlockPassword, setUnlockPassword] = useState('')
+  // Per-chat inline unlock state
+  const [unlockingChatId, setUnlockingChatId] = useState<string | null>(null)
+  const [unlockPw, setUnlockPw] = useState('')
   const [unlockError, setUnlockError] = useState('')
-  const [unlockLoading, setUnlockLoading] = useState(false)
+  const [unlocking, setUnlocking] = useState(false)
+  const unlockInputRef = useRef<HTMLInputElement>(null)
 
   // Settings
   const [settings, setSettingsState] = useState<ExtensionSettings>({
@@ -34,107 +48,111 @@ export default function Popup() {
   })
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [pwChangeError, setPwChangeError] = useState('')
   const [pwChangeSuccess, setPwChangeSuccess] = useState(false)
 
+  useEffect(() => { loadInitialData() }, [])
+
+  // Focus unlock input when it appears
   useEffect(() => {
-    loadInitialData()
-  }, [])
+    if (unlockingChatId) {
+      setTimeout(() => unlockInputRef.current?.focus(), 50)
+    }
+  }, [unlockingChatId])
 
   async function loadInitialData() {
     const pwSet = await hasPassword()
     setPasswordExists(pwSet)
-
     const chats = await getLockedChats()
     setLockedChats(chats)
-
     const s = await getSettings()
     setSettingsState(s)
   }
 
-  async function handleUnlockVault(e: React.FormEvent) {
+  // ── Vault auth ────────────────────────────────────────────────────────────
+
+  async function handleVaultSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setErrorMsg('')
+    setVaultError('')
 
     if (!passwordExists) {
-      if (passwordInput.length < 4) {
-        setErrorMsg('Password must be at least 4 characters')
+      if (vaultPw.length < 4) {
+        setVaultError('Password must be at least 4 characters')
         return
       }
-      const hash = await hashPassword(passwordInput)
+      const hash = await hashPassword(vaultPw)
       await setPasswordHash(hash)
       setPasswordExists(true)
-      setIsUnlocked(true)
-      setPasswordInput('')
+      setIsVaultOpen(true)
+      setVaultPw('')
       return
     }
 
     const storedHash = await getPasswordHash()
     if (!storedHash) return
-
-    const valid = await verifyPassword(passwordInput, storedHash)
+    const valid = await verifyPassword(vaultPw, storedHash)
     if (valid) {
-      setIsUnlocked(true)
-      setPasswordInput('')
+      setIsVaultOpen(true)
+      setVaultPw('')
     } else {
-      setErrorMsg('Incorrect password')
+      setVaultError('Incorrect password')
     }
   }
 
-  /** Start the per-chat unlock flow — opens an inline password prompt */
-  function beginUnlockChat(chat: LockedChatEntry) {
-    setUnlockingChat(chat)
-    setUnlockPassword('')
+  // ── Per-chat unlock ────────────────────────────────────────────────────────
+
+  function startUnlock(chat: LockedChatEntry) {
+    setUnlockingChatId(`${chat.siteId}:${chat.chatId}`)
+    setUnlockPw('')
     setUnlockError('')
   }
 
-  /** Confirm unlock: verify password then remove from storage */
-  async function confirmUnlockChat(e: React.FormEvent) {
+  function cancelUnlock() {
+    setUnlockingChatId(null)
+    setUnlockPw('')
+    setUnlockError('')
+  }
+
+  async function confirmUnlock(e: React.FormEvent, chat: LockedChatEntry) {
     e.preventDefault()
-    if (!unlockingChat) return
-
     setUnlockError('')
-    setUnlockLoading(true)
+    setUnlocking(true)
 
-    const storedHash = await getPasswordHash()
-    if (!storedHash) {
-      setUnlockError('No password set')
-      setUnlockLoading(false)
-      return
-    }
+    try {
+      const storedHash = await getPasswordHash()
+      if (!storedHash) { setUnlockError('No password set'); return }
 
-    const valid = await verifyPassword(unlockPassword, storedHash)
-    if (valid) {
-      await unlockChat(unlockingChat.siteId, unlockingChat.chatId)
+      const valid = await verifyPassword(unlockPw, storedHash)
+      if (!valid) {
+        setUnlockError('Incorrect password')
+        setUnlockPw('')
+        return
+      }
+
+      await unlockChat(chat.siteId, chat.chatId)
       const updated = await getLockedChats()
       setLockedChats(updated)
-      setUnlockingChat(null)
-      setUnlockPassword('')
-    } else {
-      setUnlockError('Incorrect password')
+      setUnlockingChatId(null)
+      setUnlockPw('')
+    } finally {
+      setUnlocking(false)
     }
-
-    setUnlockLoading(false)
   }
 
-  async function handleSettingsChange(newS: Partial<ExtensionSettings>) {
-    const updated = await updateSettings(newS)
+  // ── Settings ──────────────────────────────────────────────────────────────
+
+  async function handleSettingsChange(partial: Partial<ExtensionSettings>) {
+    const updated = await updateSettings(partial)
     setSettingsState(updated)
   }
 
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault()
-    setErrorMsg('')
+    setPwChangeError('')
     setPwChangeSuccess(false)
 
-    if (newPassword.length < 4) {
-      setErrorMsg('Password must be at least 4 characters')
-      return
-    }
-
-    if (newPassword !== confirmPassword) {
-      setErrorMsg('Passwords do not match')
-      return
-    }
+    if (newPassword.length < 4) { setPwChangeError('At least 4 characters'); return }
+    if (newPassword !== confirmPassword) { setPwChangeError('Passwords do not match'); return }
 
     const hash = await hashPassword(newPassword)
     await setPasswordHash(hash)
@@ -144,119 +162,58 @@ export default function Popup() {
     setPasswordExists(true)
   }
 
+  // ── Render ────────────────────────────────────────────────────────────────
+
   return (
     <div className="popup-container">
+      {/* Header */}
       <div className="header">
         <div className="logo-group">
           <span className="logo-icon">🔒</span>
           <h1 className="title">AI Chat Lock</h1>
         </div>
-
         <div className="tab-nav">
-          <button
-            className={`tab-btn ${activeTab === 'vault' ? 'active' : ''}`}
-            onClick={() => setActiveTab('vault')}>
-            Vault
-          </button>
-          <button
-            className={`tab-btn ${activeTab === 'settings' ? 'active' : ''}`}
-            onClick={() => setActiveTab('settings')}>
-            Settings
-          </button>
+          <button className={`tab-btn ${activeTab === 'vault' ? 'active' : ''}`}
+            onClick={() => setActiveTab('vault')}>Vault</button>
+          <button className={`tab-btn ${activeTab === 'settings' ? 'active' : ''}`}
+            onClick={() => setActiveTab('settings')}>Settings</button>
         </div>
       </div>
 
-      {/* ── Inline unlock-chat modal ── */}
-      {unlockingChat && (
-        <div className="modal-overlay">
-          <div className="modal-card">
-            <h3 className="modal-title">🔓 Unlock Chat</h3>
-            <p className="modal-subtitle">
-              Enter your master password to unlock<br />
-              <strong>{maskTitle(unlockingChat.title)}</strong>
-            </p>
-            <form onSubmit={confirmUnlockChat} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <input
-                type="password"
-                className="input-field"
-                placeholder="Master password"
-                value={unlockPassword}
-                onChange={(e) => setUnlockPassword(e.target.value)}
-                autoFocus
-                disabled={unlockLoading}
-              />
-              {unlockError && <div className="error-text">{unlockError}</div>}
-              <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => setUnlockingChat(null)}
-                  disabled={unlockLoading}>
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn-primary"
-                  disabled={unlockLoading}>
-                  {unlockLoading ? 'Verifying…' : 'Unlock'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'vault' ? (
+      {/* Vault tab */}
+      {activeTab === 'vault' && (
         <div className="card">
-          {!isUnlocked ? (
-            <form onSubmit={handleUnlockVault} className="vault-auth-box">
+          {!isVaultOpen ? (
+            /* ── Auth gate ── */
+            <form onSubmit={handleVaultSubmit} className="vault-auth-box">
               <p>
                 {passwordExists
-                  ? 'Enter master password to manage locked chats'
-                  : 'Set a master password to get started'}
+                  ? 'Enter master password to view locked chats'
+                  : 'Create a master password to get started'}
               </p>
-
               <input
                 type="password"
                 className="input-field"
                 placeholder="Master password"
-                value={passwordInput}
-                onChange={(e) => setPasswordInput(e.target.value)}
+                value={vaultPw}
+                onChange={(e) => setVaultPw(e.target.value)}
                 autoFocus
               />
-
-              {errorMsg && <div className="error-text">{errorMsg}</div>}
-
+              {vaultError && <div className="error-text">{vaultError}</div>}
               <button type="submit" className="btn-primary">
-                {passwordExists ? 'Unlock Vault' : 'Set Master Password'}
+                {passwordExists ? 'Open Vault' : 'Set Master Password'}
               </button>
             </form>
           ) : (
+            /* ── Vault contents ── */
             <div>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: 12
-                }}>
-                <span
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color: 'var(--text-muted)'
-                  }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>
                   LOCKED CHATS ({lockedChats.length})
                 </span>
                 <button
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: 'var(--primary-accent)',
-                    cursor: 'pointer',
-                    fontSize: 12
-                  }}
-                  onClick={() => setIsUnlocked(false)}>
+                  style={{ background: 'none', border: 'none', color: 'var(--primary-accent)', cursor: 'pointer', fontSize: 12 }}
+                  onClick={() => { setIsVaultOpen(false); setUnlockingChatId(null) }}>
                   Lock Vault
                 </button>
               </div>
@@ -265,28 +222,76 @@ export default function Popup() {
                 <div className="empty-state">No locked chats across any site</div>
               ) : (
                 <div className="chat-list">
-                  {lockedChats.map((chat) => (
-                    <div key={`${chat.siteId}:${chat.chatId}`} className="chat-item">
-                      <div className="chat-info">
-                        <span className="chat-site-badge">{chat.siteId}</span>
-                        <span className="chat-title">
-                          {maskTitle(chat.title)}
-                        </span>
+                  {lockedChats.map((chat) => {
+                    const key = `${chat.siteId}:${chat.chatId}`
+                    const isBeingUnlocked = unlockingChatId === key
+                    return (
+                      <div key={key} className="chat-item-wrapper">
+                        <div className="chat-item">
+                          <div className="chat-info">
+                            <span className="chat-site-badge">{chat.siteId}</span>
+                            <span className="chat-title">{maskTitle(chat.title)}</span>
+                          </div>
+                          {!isBeingUnlocked ? (
+                            <button
+                              className="unlock-btn"
+                              title="Unlock this chat"
+                              onClick={() => startUnlock(chat)}>
+                              🔓
+                            </button>
+                          ) : (
+                            <button
+                              className="cancel-btn"
+                              onClick={cancelUnlock}>
+                              ✕
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Inline password entry for this specific chat */}
+                        {isBeingUnlocked && (
+                          <form
+                            className="unlock-form"
+                            onSubmit={(e) => confirmUnlock(e, chat)}>
+                            <input
+                              ref={unlockInputRef}
+                              type="password"
+                              className="input-field"
+                              placeholder="Enter password to unlock"
+                              value={unlockPw}
+                              onChange={(e) => setUnlockPw(e.target.value)}
+                              disabled={unlocking}
+                            />
+                            {unlockError && <div className="error-text">{unlockError}</div>}
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={cancelUnlock}
+                                disabled={unlocking}>
+                                Cancel
+                              </button>
+                              <button
+                                type="submit"
+                                className="btn-primary"
+                                disabled={unlocking}>
+                                {unlocking ? 'Checking…' : 'Confirm Unlock'}
+                              </button>
+                            </div>
+                          </form>
+                        )}
                       </div>
-                      <button
-                        className="unlock-btn"
-                        title="Unlock chat"
-                        onClick={() => beginUnlockChat(chat)}>
-                        🔓
-                      </button>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
           )}
         </div>
-      ) : (
+      )}
+
+      {/* Settings tab */}
+      {activeTab === 'settings' && (
         <div className="card settings-group">
           <div className="setting-row">
             <span className="setting-label">Auto re-lock on idle</span>
@@ -294,9 +299,7 @@ export default function Popup() {
               <input
                 type="checkbox"
                 checked={settings.autoRelockEnabled}
-                onChange={(e) =>
-                  handleSettingsChange({ autoRelockEnabled: e.target.checked })
-                }
+                onChange={(e) => handleSettingsChange({ autoRelockEnabled: e.target.checked })}
               />
               <span className="slider"></span>
             </label>
@@ -309,11 +312,7 @@ export default function Popup() {
                 className="input-field"
                 style={{ width: '80px', padding: '4px 8px' }}
                 value={settings.autoRelockMinutes}
-                onChange={(e) =>
-                  handleSettingsChange({
-                    autoRelockMinutes: parseInt(e.target.value, 10)
-                  })
-                }>
+                onChange={(e) => handleSettingsChange({ autoRelockMinutes: parseInt(e.target.value, 10) })}>
                 <option value={1}>1 min</option>
                 <option value={5}>5 min</option>
                 <option value={15}>15 min</option>
@@ -324,36 +323,20 @@ export default function Popup() {
 
           <hr style={{ borderColor: 'var(--card-border)', margin: '8px 0' }} />
 
-          <form
-            onSubmit={handleChangePassword}
-            style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <span className="setting-label">
               {passwordExists ? 'Change Master Password' : 'Set Master Password'}
             </span>
-
             <input
-              type="password"
-              className="input-field"
-              placeholder="New password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
+              type="password" className="input-field" placeholder="New password"
+              value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
             />
-
             <input
-              type="password"
-              className="input-field"
-              placeholder="Confirm new password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
+              type="password" className="input-field" placeholder="Confirm new password"
+              value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
             />
-
-            {errorMsg && <div className="error-text">{errorMsg}</div>}
-            {pwChangeSuccess && (
-              <div style={{ color: 'var(--success)', fontSize: 12 }}>
-                Password updated successfully!
-              </div>
-            )}
-
+            {pwChangeError && <div className="error-text">{pwChangeError}</div>}
+            {pwChangeSuccess && <div style={{ color: 'var(--success)', fontSize: 12 }}>Password updated!</div>}
             <button type="submit" className="btn-primary" style={{ marginTop: 4 }}>
               Update Password
             </button>

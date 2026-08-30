@@ -192,14 +192,62 @@ body {
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 14px;
-  padding: 4px;
+  font-size: 16px;
+  padding: 4px 6px;
   border-radius: 4px;
-  transition: color 0.2s;
+  transition: color 0.2s, transform 0.15s;
+  flex-shrink: 0;
 }
 
 .unlock-btn:hover {
+  color: var(--primary-accent);
+  transform: scale(1.15);
+}
+
+.cancel-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: color 0.2s;
+  flex-shrink: 0;
+}
+
+.cancel-btn:hover {
   color: var(--danger);
+}
+
+.chat-item-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* When wrapper used, remove border from the inner chat-item */
+.chat-item-wrapper .chat-item {
+  border: none;
+  border-radius: 0;
+}
+
+.unlock-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  background: rgba(139, 92, 246, 0.05);
+  border-top: 1px solid rgba(139, 92, 246, 0.2);
+  animation: expandDown 0.2s ease-out;
+}
+
+@keyframes expandDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .empty-state {
